@@ -23,3 +23,8 @@ Total UZS (excl. Ars): 20 905 944.41; foreign (залог) 150 000
 - Bot: @finanstopbot. Server: Cloudflare Worker `psfinance` (account a514…33d5), https://psfinance.psshop.workers.dev, secret BOT_TOKEN.
 - AI: owner chose Cloudflare Workers AI (free, fast) — NOT Claude API, NOT paid. Whisper for voice; llama for parsing; vision model for receipts. If receipt reading is poor -> photos only via Claude through GitHub Actions (owner subscription, like Postik).
 - Code repo: naildominant/ps-finance-bot (private). Owner wants copyable things in code blocks; links as plain links.
+
+## Google Sheet (stage 1, 25.11)
+- «PS Финансы» id 1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU (owner's Drive), locale ru_RU (formula separator `;`), TZ Asia/Tashkent.
+- Sheets: Главная (periods: today / week from Monday / last 14 days / month from 1st; balances), Журнал A–P (id, datetime, who, direction, type, group, category, UZS, USD, CBU rate, from, to, status[«удалено» excluded], source, comment, linked id), Карты (start balances col D; I = current = D + in(L) − out(K)), Категории (direction, kind, group, category), Лимиты (level группа/категория; units сум/$/% оборота), Долги и накопления, Доли (bot, stage 5), Залоги и предоплаты (status «открыт» = foreign money), Настройки (B2 CBU rate filled by bot; percentages; Telegram IDs B16:B19).
+- Open: ad limit base «1% оборота» uses current-month PS SHOP income for now (question #3 pending). Apps Script not yet installed.
