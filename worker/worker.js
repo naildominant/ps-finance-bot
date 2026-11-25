@@ -282,6 +282,9 @@ async function askNext(ctx, cfg, st) {
     return void await send(ctx, 'Это доход, расход или перевод между своими картами?', withBack(typeRows())); }
   if (d.amount == null) { st.await = 'amount'; await putSt(ctx, st);
     return void await send(ctx, '💰 Какая сумма? Напишите число, например <code>150000</code> или <code>$50</code>.', withBack()); }
+  if (d.dir === 'PS SHOP' && d.type === 'Доход' && !d.cat) {   // категорию дохода PS SHOP не спрашиваем (владелец 26.11); фильтры — позже
+    if (d.group) d.cat = d.group; else d.group = d.cat = 'Продажа';
+  }
   if (needsCat(d.type) && !d.cat && d.group) {
     const subs = cfg.cats.filter(c => c.dir === d.dir && c.kind === d.type && c.group === d.group);
     if (subs.length) { st.await = null; await putSt(ctx, st); return void await send(ctx, `🏷 ${d.group}: что именно?`, withBack(chunk(subs.map((c, i) => [c.cat, 's:' + i]), 2))); }

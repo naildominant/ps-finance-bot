@@ -67,3 +67,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - Clean chat (owner 26.11): pressed question messages deleted (gone); all bot sends + owner messages tracked in ctx.trail → DO 'trail'; dirMenu() purges trail before sending menu. Kept (noTrack/keep): saved «✅ Записано», done emoji, Leadex/rent/supplier/reserve results, залоги items, errors.
 - Pressed button with premium icon → bot sends that emoji (from bot; sending as user impossible). Tracked (cleaned at menu).
 - Категории: + Личное/Расход/Самокат (owner 26.11), no limit.
+- PS SHOP income: category NOT asked (owner 26.11); default «Продажа» (Категории row added) or detected group. Filtering by category — later stage.
