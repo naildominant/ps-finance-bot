@@ -153,7 +153,7 @@ function summary(d) {
   if (d.type !== 'Между своими') L.push(`🏷 ${d.cat ? (d.group === d.cat ? d.cat : d.group + ' / ' + d.cat) : '—'}`);
   if (d.type === 'Между своими') L.push(`💳 ${d.from || '—'} → ${d.to || '—'}`);
   else L.push(`💳 ${(d.type === 'Расход' ? d.from : d.to) || '—'}`);
-  L.push(`📅 ${human(d.date)}`);
+  L.push(`📅 ${human(d.date)}${d.time ? ', ' + d.time : ''}`);
   if (d.comment) L.push(`💬 ${d.comment}`);
   return L.join('\n');
 }
@@ -199,7 +199,7 @@ async function save(ctx, cfg, d) {
   const usd = d.cur === '$';
   let rate = '', uzs = d.amount, usdAmt = '';
   if (usd) { rate = await cbuRate(ctx, d.date); uzs = Math.round(d.amount * rate); usdAmt = d.amount; }
-  const t = nowT(), hhmm = t.toISOString().slice(11, 16);
+  const hhmm = d.time || nowT().toISOString().slice(11, 16);
   const when = Date.parse(d.date + 'T' + hhmm + ':00Z') - TZ_MS;
   const from = d.type === 'Доход' ? '' : d.from || '', to = d.type === 'Расход' ? '' : d.to || '';
   const row = (id) => [id, { d: when }, 'Наиль', d.dir, d.type, d.group || '', d.cat || '', uzs, usdAmt, rate, from, to, 'ок', d.src || 'текст', d.comment || '', ''];
@@ -220,7 +220,7 @@ async function loadRow(ctx, id) {
   const [g] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: `A${f.row}:P${f.row}` }]);
   const r = g.values[0];
   return { row: f.row, d: { edit: id, dir: r[3], type: r[4], group: r[5], cat: r[6], amount: r[8] ? r[8] : r[7], cur: r[8] ? '$' : 'сум',
-    from: r[10], to: r[11], date: ymdT(new Date(r[1].d + TZ_MS)), src: r[13], comment: r[14] }, status: r[12] };
+    from: r[10], to: r[11], date: ymdT(new Date(r[1].d + TZ_MS)), time: new Date(r[1].d + TZ_MS).toISOString().slice(11, 16), src: r[13], comment: r[14] }, status: r[12] };
 }
 
 // ---------- Обработка ----------
@@ -255,7 +255,7 @@ async function startDraft(ctx, cfg, dir, text) {
   let p = {};
   try { p = await aiParse(ctx, cfg, dir, text); } catch (e) { p = {}; }
   const d = { dir, type: TYPES.includes(p.type) ? p.type : null, amount: typeof p.amount === 'number' && p.amount > 0 ? p.amount : null,
-    cur: p.currency === '$' ? '$' : 'сум', date: parseDate(p.date) || todayYmd(), comment: text.slice(0, 200), src: 'текст' };
+    cur: p.currency === '$' ? '$' : 'сум', date: parseDate(p.date) || todayYmd(), comment: text.slice(0, 200), src: 'текст', time: nowT().toISOString().slice(11, 16) };
   if (d.amount == null) { const a = parseAmount((text.match(/\$?\d[\d\s.,]*\s*(к|тыс|млн|\$)?/i) || [''])[0]); if (a && a.amount) { d.amount = a.amount; if (a.cur) d.cur = a.cur; } }
   if (d.type) { const c = matchCat(cfg, d, p.category); if (c && said(text, c)) { d.group = c.group; d.cat = c.cat; } }
   const cf = matchCard(cfg, p.card_from), ct = matchCard(cfg, p.card_to);
