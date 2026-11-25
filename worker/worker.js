@@ -2,7 +2,10 @@
 // Этап 2: текст → разбор (Workers AI) → переспрос → итог с кнопками ✅ ❌ ✏️ → запись в Google Таблицу.
 
 const DIRS = ['PS SHOP', 'Аренда PS5', 'Leadex', 'Личное'];
-const TYPES = ['Доход', 'Расход', 'Между своими'];
+const TYPES = ['Доход', 'Расход', 'Между своими', 'Предоплата', 'Залог', 'Вложение'];
+const IN_T = ['Доход', 'Предоплата', 'Залог'], OUT_T = ['Расход', 'Вложение', 'Возврат залога'];
+const isIn = t => IN_T.includes(t), isOut = t => OUT_T.includes(t), needsCat = t => t === 'Доход' || t === 'Расход';
+const typeRows = () => chunk(TYPES.map((t, i) => [TLABEL(t), 'ty:' + i]), 3);
 const TLABEL = t => (t === 'Между своими' ? 'Между' : t);   // короткая подпись на кнопке
 const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const DAY = 86400000, TZ_MS = 5 * 3600000;
@@ -139,11 +142,11 @@ async function aiParse(ctx, cfg, dir, text) {
   const sys = `Ты разбираешь сообщение о деньгах для учёта. Сегодня ${todayYmd()} (Ташкент). ${dir ? 'Пользователь выбрал направление: ' + dir + '.' : ''}
 В сообщении может быть ОДНА или НЕСКОЛЬКО операций. Раздели их.
 Верни ТОЛЬКО JSON: {"records":[{"text": точный кусок сообщения про эту операцию, "direction": "PS SHOP"|"Аренда PS5"|"Leadex"|"Личное"|null,
-"type": "Доход"|"Расход"|"Между своими"|null, "amount": число|null, "currency": "сум"|"$"|null, "category": из списка направления или null,
-"card_from": карта или null, "card_to": карта или null, "date": "YYYY-MM-DD"|null}]}
+"type": "Доход"|"Расход"|"Между своими"|"Предоплата"|"Залог"|"Вложение"|null, "amount": число|null, "currency": "сум"|"$"|null, "category": из списка направления или null,
+"card_from": карта или null, "card_to": карта или null, "date": "YYYY-MM-DD"|null, "book": дата брони для предоплаты "YYYY-MM-DD"|null}]}
 Правила: сумма числом ("50к"=50000, "1,5 млн"=1500000, "миллион 800"=1800000, "полтора миллиона"=1500000). "$", "долларов", "бакс" → currency "$".
 Направление: личные траты (еда, кафе, плов, аптека, квартира, такси, одежда) — Личное; продажа игр, подписок, аккаунтов, поставщик, OLX — PS SHOP; аренда приставок PS5 — Аренда PS5; сайты, Leadex — Leadex. ${dir ? 'Если операция одна — направление ' + dir + '.' : ''} Не ясно — null.
-"пришло", "получил", "заплатили мне", "взял за" — Доход. "потратил", "купил", "заплатил", "поели", "расход" — Расход. Перевод между своими картами, снял наличные — "Между своими". Не уверен — null.
+"пришло", "получил", "заплатили мне", "взял за" — Доход. "потратил", "купил", "заплатил", "поели", "расход" — Расход. Перевод между своими картами, снял наличные — "Между своими". "предоплата", "бронь", "забронировал" — "Предоплата". "залог" — "Залог". "вложил", "вложение", "купил для Leadex технику в долг" — "Вложение". Не уверен — null.
 Нет суммы — amount null. Не уверен в категории — null, НЕ угадывай. Для расхода карта — card_from, для дохода — card_to.
 Дата: "вчера", "позавчера", "25 ноября" → YYYY-MM-DD, не сказано → null.
 Категории по направлениям:
@@ -214,9 +217,11 @@ function summary(d) {
   L.push(`🏢 ${d.dir}`);
   L.push(`🔄 ${d.type || '—'}`);
   L.push(`💰 ${d.amount != null ? (d.cur === '$' ? '$' + d.amount : fmt(d.amount) + ' сум') : '—'}`);
-  if (d.type !== 'Между своими') L.push(`🏷 ${d.cat ? (d.group === d.cat ? d.cat : d.group + ' / ' + d.cat) : '—'}`);
+  if (needsCat(d.type)) L.push(`🏷 ${d.cat ? (d.group === d.cat ? d.cat : d.group + ' / ' + d.cat) : '—'}`);
   if (d.type === 'Между своими') L.push(`💳 ${d.from || '—'} → ${d.to || '—'}`);
-  else L.push(`💳 ${(d.type === 'Расход' ? d.from : d.to) || '—'}`);
+  else L.push(`💳 ${(isOut(d.type) ? d.from : d.to) || '—'}`);
+  if (d.type === 'Предоплата') L.push(`🗓 Бронь на ${d.book ? human(d.book) : '—'}`);
+  if (d.type === 'Предоплата' || d.type === 'Залог') L.push('ℹ️ Чужие деньги: в доход не идут, пока не закроете');
   L.push(`📅 ${human(d.date)}${d.time ? ', ' + d.time : ''}`);
   if (d.comment) L.push(`💬 ${d.comment}`);
   return L.join('\n');
@@ -228,18 +233,21 @@ async function askNext(ctx, cfg, st) {
   if (!d.dir) { st.await = null; await putSt(ctx, st);
     return void await send(ctx, `К какому направлению относится: «${esc(d.comment)}»?`, withBack([[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']]])); }
   if (!d.type) { st.await = null; await putSt(ctx, st);
-    return void await send(ctx, 'Это доход, расход или перевод между своими картами?', withBack([TYPES.map((t, i) => [TLABEL(t), 'ty:' + i])])); }
+    return void await send(ctx, 'Это доход, расход или перевод между своими картами?', withBack(typeRows())); }
   if (d.amount == null) { st.await = 'amount'; await putSt(ctx, st);
     return void await send(ctx, '💰 Какая сумма? Напишите число, например <code>150000</code> или <code>$50</code>.', withBack()); }
-  if (d.type !== 'Между своими' && !d.cat && d.group) {
+  if (needsCat(d.type) && !d.cat && d.group) {
     const subs = cfg.cats.filter(c => c.dir === d.dir && c.kind === d.type && c.group === d.group);
     if (subs.length) { st.await = null; await putSt(ctx, st); return void await send(ctx, `🏷 ${d.group}: что именно?`, withBack(chunk(subs.map((c, i) => [c.cat, 's:' + i]), 2))); }
   }
-  if (d.type !== 'Между своими' && !d.cat) return void await askGroup(ctx, cfg, st);
+  if (needsCat(d.type) && !d.cat) return void await askGroup(ctx, cfg, st);
   if (d.type === 'Между своими' && !d.from) return void await askCard(ctx, cfg, st, 'from', 'С какой карты?');
   if (d.type === 'Между своими' && !d.to) return void await askCard(ctx, cfg, st, 'to', 'На какую карту?');
-  if (d.type === 'Расход' && !d.from) return void await askCard(ctx, cfg, st, 'from', '💳 С какой карты или наличными?');
-  if (d.type === 'Доход' && !d.to) return void await askCard(ctx, cfg, st, 'to', '💳 На какую карту пришли деньги?');
+  if (isOut(d.type) && !d.from) return void await askCard(ctx, cfg, st, 'from', '💳 С какой карты или наличными?');
+  if (isIn(d.type) && !d.to) return void await askCard(ctx, cfg, st, 'to', '💳 На какую карту пришли деньги?');
+  if (d.type === 'Предоплата' && !d.book) { st.await = 'book'; await putSt(ctx, st);
+    return void await send(ctx, '📅 На какую дату бронь? Нажмите кнопку или напишите, например, <code>28.11</code>.',
+      withBack([[['Сегодня', 'bd:0'], ['Завтра', 'bd:1'], ['Послезавтра', 'bd:2']]])); }
   st.await = null; await putSt(ctx, st);
   await send(ctx, summary(d), [[['✅ Записать', 'ok'], ['❌ Отменить', 'no'], ['✏️ Правка', 'ed']], [BACK]]);
   return true;
@@ -252,11 +260,11 @@ async function askGroup(ctx, cfg, st) {
 async function askCard(ctx, cfg, st, side, q) {
   st.await = null; st.side = side; await putSt(ctx, st);
   const d = st.d, list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) =>
-    d.type === 'Доход' ? c.inc.includes(d.dir) : d.type === 'Расход' ? c.exp.includes(d.dir) : true);
+    isIn(d.type) ? c.inc.includes(d.dir) : isOut(d.type) ? c.exp.includes(d.dir) : true);
   await send(ctx, q, withBack(chunk((list.length ? list : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [c.name, 'k:' + i]), 2)));
 }
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
-const dirMenu = ctx => send(ctx, 'Выберите направление записи:', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📊 Открыть таблицу', SHEET_URL]]]);
+const dirMenu = ctx => send(ctx, 'Выберите направление записи:', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📋 Залоги и брони', 'zl'], ['🧮 Остаток карты', 'adj']], [['📊 Открыть таблицу', SHEET_URL]]]);
 
 // ---------- Запись в таблицу ----------
 async function save(ctx, cfg, d) {
@@ -273,17 +281,24 @@ async function save(ctx, cfg, d) {
   if (usd) { rate = await cbuRate(ctx, d.date); uzs = Math.round(d.amount * rate); usdAmt = d.amount; }
   const hhmm = d.time || nowT().toISOString().slice(11, 16);
   const when = Date.parse(d.date + 'T' + hhmm + ':00Z') - TZ_MS;
-  const from = d.type === 'Доход' ? '' : d.from || '', to = d.type === 'Расход' ? '' : d.to || '';
+  const from = isIn(d.type) ? '' : d.from || '', to = isOut(d.type) ? '' : d.to || '';
   const row = (id) => [id, { d: when }, 'Наиль', d.dir, d.type, d.group || '', d.cat || '', uzs, usdAmt, rate, from, to, 'ок', d.src || 'текст', d.comment || '', ''];
   if (d.edit) {
     const [f] = await gas(ctx, [{ op: 'find', sheet: 'Журнал', col: 'A', value: d.edit }]);
     if (!f.row) throw new Error('не нашёл запись ' + d.edit);
     await gas(ctx, [{ op: 'set', sheet: 'Журнал', range: `A${f.row}:P${f.row}`, values: [row(d.edit)] }]);
+    if (d.type === 'Предоплата' || d.type === 'Залог') {
+      const [z] = await gas(ctx, [{ op: 'find', sheet: 'Залоги и предоплаты', col: 'A', value: d.edit }]);
+      if (z.row) await gas(ctx, [{ op: 'set', sheet: 'Залоги и предоплаты', range: `B${z.row}:G${z.row}`, values: [[{ d: when }, d.type, d.dir, uzs, to, d.book ? { d: Date.parse(d.book) } : '']] }]);
+    }
     return d.edit;
   }
   const n = await store(ctx, { op: 'inc', k: ctx.dry ? 'dry:seq' : 'seq' });
   const id = 'R' + n;
-  await gas(ctx, [{ op: 'append', sheet: 'Журнал', row: row(id) }]);
+  const ops = [{ op: 'append', sheet: 'Журнал', row: row(id) }];
+  if (d.type === 'Предоплата' || d.type === 'Залог')
+    ops.push({ op: 'append', sheet: 'Залоги и предоплаты', row: [id, { d: when }, d.type, d.dir, uzs, to, d.book ? { d: Date.parse(d.book) } : '', 'открыт', d.comment || ''] });
+  await gas(ctx, ops);
   return id;
 }
 async function loadRow(ctx, id) {
@@ -293,6 +308,130 @@ async function loadRow(ctx, id) {
   const r = g.values[0];
   return { row: f.row, d: { edit: id, dir: r[3], type: r[4], group: r[5], cat: r[6], amount: r[8] ? r[8] : r[7], cur: r[8] ? '$' : 'сум',
     from: r[10], to: r[11], date: ymdT(new Date(r[1].d + TZ_MS)), time: new Date(r[1].d + TZ_MS).toISOString().slice(11, 16), src: r[13], comment: r[14] }, status: r[12] };
+}
+
+
+// ---------- Залоги, брони, сверка остатка ----------
+const ZS = 'Залоги и предоплаты';
+async function openItems(ctx) {
+  const [g] = await gas(ctx, [{ op: 'get', sheet: ZS, range: 'A2:I300' }]);
+  return g.values.map((r, i) => ({ row: i + 2, id: String(r[0]), date: r[1], type: r[2], dir: r[3], sum: Number(r[4]) || 0, card: r[5], book: r[6], status: r[7], comment: r[8] }))
+    .filter(x => x.id && x.status === 'открыт');
+}
+const itemText = x => `${x.type === 'Залог' ? '🔐 Залог' : '🗓 Предоплата'} ${x.id} · ${fmt(x.sum)} сум · ${x.card || '—'}` +
+  (x.book && x.book.d ? ` · бронь ${human(ymdT(new Date(x.book.d + TZ_MS)))}` : '') + (x.comment ? `\n💬 ${esc(x.comment)}` : '');
+const itemButtons = x => x.type === 'Залог'
+  ? [[['↩️ Вернул клиенту', 'zr:' + x.id]], [['➕ Продление из залога', 'zp:' + x.id], ['✋ Удержал часть', 'zk:' + x.id]]]
+  : [[['✅ Клиент приехал', 'pc:' + x.id], ['🔥 Сгорела', 'pb:' + x.id]]];
+// запись в журнал «от бота» (без черновика)
+const botRec = (ctx, cfg, f) => save(ctx, cfg, { cur: 'сум', date: todayYmd(), src: 'бот', ...f });
+async function setItem(ctx, x, sum, status) { await gas(ctx, [{ op: 'set', sheet: ZS, range: `E${x.row}:H${x.row}`, values: [[sum, x.card, x.book || '', status]] }]); }
+
+async function onTool(ctx, q) {
+  const cfg = await config(ctx);
+  const [k, id] = q.data.split(':'); const mid = q.message.message_id;
+  await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
+  if (k === 'zl') {
+    const items = await openItems(ctx);
+    await edit(ctx, mid, '📋 Залоги и брони');
+    if (!items.length) return send(ctx, 'Открытых залогов и броней нет.');
+    for (const x of items) await send(ctx, itemText(x), itemButtons(x));
+    return;
+  }
+  if (k === 'adj') {
+    await edit(ctx, mid, '🧮 Остаток карты');
+    await putSt(ctx, { tool: { kind: 'adj' } });
+    return send(ctx, 'Какую карту сверить?', withBack(chunk(cfg.cards.map((c, i) => [c.name, 'aj:' + i]), 2)));
+  }
+  if (k === 'aj') {
+    const c = cfg.cards[+id];
+    await edit(ctx, mid, '💳 ' + c.name);
+    await putSt(ctx, { tool: { kind: 'adj', card: c.name, cur: c.cur }, await: 'tool' });
+    return send(ctx, `Сколько сейчас на самом деле на «${c.name}»? Напишите число${c.cur === '$' ? ' в долларах' : ''}.`, withBack());
+  }
+  const items = await openItems(ctx); const x = items.find(i => i.id === id);
+  if (!x) return edit(ctx, mid, 'Эта запись уже закрыта.');
+  if (k === 'zr') return edit(ctx, mid, `Вернуть клиенту ${fmt(x.sum)} сум с «${x.card}»?`, [[['✅ Да, вернул', 'zry:' + id], ['Нет', 'zl:']]]);
+  if (k === 'zry') {
+    const rid = await botRec(ctx, cfg, { dir: x.dir, type: 'Возврат залога', amount: x.sum, from: x.card, comment: 'Возврат залога ' + x.id });
+    await setItem(ctx, x, 0, 'закрыт');
+    return edit(ctx, mid, `↩️ Залог ${x.id} вернули клиенту: ${fmt(x.sum)} сум с «${x.card}» (${rid}). Это не расход.`);
+  }
+  if (k === 'zp' || k === 'zk') {
+    await putSt(ctx, { tool: { kind: k, id }, await: 'tool' });
+    return edit(ctx, mid, itemText(x) + `\n\n${k === 'zp' ? '➕ Сколько ушло на продление' : '✋ Сколько оставляете себе'}? Напишите число (не больше ${fmt(x.sum)}).`, withBack());
+  }
+  if (k === 'pb') {
+    const rid = await botRec(ctx, cfg, { dir: x.dir, type: 'Доход', group: x.dir === 'Аренда PS5' ? 'Аренда' : '', cat: 'Сгоревшая предоплата', amount: x.sum, comment: 'Сгорела предоплата ' + x.id });
+    await setItem(ctx, x, 0, 'сгорела');
+    return edit(ctx, mid, `🔥 Предоплата ${x.id} сгорела: ${fmt(x.sum)} сум теперь доход (${rid}).`);
+  }
+  if (k === 'pc') {
+    await putSt(ctx, { tool: { kind: 'pc', id }, await: 'tool' });
+    return edit(ctx, mid, itemText(x) + '\n\n✅ Сколько клиент доплатил? Напишите число или нажмите «0».', withBack([[['0 — без доплаты', 'p0:' + id]]]));
+  }
+  if (k === 'p0') return finishPrepay(ctx, cfg, x, 0, null, mid);
+  if (k === 'pk') {   // карта доплаты: id = itemId|cardIndex|amount
+    const [iid, ci, amt] = q.data.slice(3).split('|'); const xi = items.find(i => i.id === iid);
+    return finishPrepay(ctx, cfg, xi, Number(amt), cfg.cards[+ci].name, mid);
+  }
+}
+async function finishPrepay(ctx, cfg, x, extra, card, mid) {
+  const grp = x.dir === 'Аренда PS5' ? 'Аренда' : '';
+  const a = await botRec(ctx, cfg, { dir: x.dir, type: 'Доход', group: grp, cat: 'Предоплата', amount: x.sum, comment: 'Подтверждена предоплата ' + x.id });
+  let b = '';
+  if (extra > 0) b = await botRec(ctx, cfg, { dir: x.dir, type: 'Доход', group: grp, cat: 'Доплата', amount: extra, to: card, comment: 'Доплата к ' + x.id });
+  await setItem(ctx, x, 0, 'подтверждено');
+  await putSt(ctx, {});
+  const t = `✅ ${x.id} подтверждено: предоплата ${fmt(x.sum)}${extra ? ` + доплата ${fmt(extra)} на «${card}»` : ''} = доход ${fmt(x.sum + extra)} сум (${a}${b ? ', ' + b : ''}).`;
+  return mid ? edit(ctx, mid, t) : send(ctx, t);
+}
+// ответы числом на вопросы инструментов
+async function onToolText(ctx, cfg, st, text) {
+  const a = parseAmount(text);
+  if (!a) return send(ctx, 'Не понял число. Напишите, например, <code>150000</code>.');
+  const t = st.tool;
+  if (t.kind === 'adj') {
+    const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+    const r = g.values.find(r => String(r[0]) === t.card); const now = Number(r && r[8]) || 0;
+    const diff = Math.round((a.amount - now) * 100) / 100;
+    await putSt(ctx, {});
+    if (!diff) return send(ctx, `✅ На «${t.card}» по записям уже ${fmt(now)} — совпадает, ничего не меняю.`);
+    const f = { dir: '—', type: 'Корректировка', amount: Math.abs(diff), cur: t.cur === '$' ? '$' : 'сум', comment: `Сверка: было по записям ${fmt(now)}, на самом деле ${fmt(a.amount)}` };
+    if (diff > 0) f.to = t.card; else f.from = t.card;
+    if (f.cur === '$') { f.amount = Math.abs(diff); }
+    const rid = await botRec(ctx, cfg, f);
+    return send(ctx, `🧮 «${t.card}»: по записям было ${fmt(now)}, теперь ${fmt(a.amount)} (${diff > 0 ? '+' : '−'}${fmt(Math.abs(diff))}). Записал как корректировку ${rid}, в доходы и расходы не идёт.`,
+      [[['🗑 Отменить корректировку', 'rm:' + rid]]]);
+  }
+  const items = await openItems(ctx); const x = items.find(i => i.id === t.id);
+  if (!x) { await putSt(ctx, {}); return send(ctx, 'Эта запись уже закрыта.'); }
+  if (t.kind === 'zp' || t.kind === 'zk') {
+    if (a.amount > x.sum) return send(ctx, `Больше залога (${fmt(x.sum)}). Напишите сумму не больше залога.`);
+    const rid = await botRec(ctx, cfg, { dir: x.dir, type: 'Доход', group: x.dir === 'Аренда PS5' ? 'Аренда' : '', cat: t.kind === 'zp' ? 'Продление из залога' : 'Удержано из залога', amount: a.amount, comment: (t.kind === 'zp' ? 'Продление из залога ' : 'Удержано из залога ') + x.id });
+    const left = x.sum - a.amount;
+    await setItem(ctx, x, left, left > 0 ? 'открыт' : 'закрыт');
+    await putSt(ctx, {});
+    return send(ctx, `✅ ${fmt(a.amount)} сум из залога ${x.id} — доход аренды (${rid}). Осталось залога: ${fmt(left)}.`,
+      left > 0 ? [[['↩️ Остаток вернул клиенту', 'zr:' + x.id]]] : null);
+  }
+  if (t.kind === 'pc') {
+    if (!a.amount) return finishPrepay(ctx, cfg, x, 0, null);
+    const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.inc.includes(x.dir));
+    await putSt(ctx, {});
+    return send(ctx, `💳 Куда пришла доплата ${fmt(a.amount)}?`, chunk(list.map(({ c, i }) => [c.name, `pk:${x.id}|${i}|${a.amount}`]), 2));
+  }
+}
+// ежедневно в 9:00: брони, у которых наступила дата
+async function morning(env) {
+  const ctx = { env, out: [] }; const cfg = await config(ctx, true);
+  ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
+  const today = todayYmd();
+  for (const x of await openItems(ctx)) {
+    if (x.type !== 'Предоплата' || !x.book || !x.book.d) continue;
+    if (ymdT(new Date(x.book.d + TZ_MS)) > today) continue;
+    await send(ctx, 'Клиент приехал?\n' + itemText(x), itemButtons(x));
+  }
 }
 
 // ---------- Обработка ----------
@@ -320,11 +459,17 @@ async function onMessage(ctx, m) {
   }
   if (m.document) return send(ctx, 'Этот файл я не читаю. Пришлите фото, голосовое или текст.');
   if (!text) return;
+  if (st.await === 'tool' && st.tool) return onToolText(ctx, cfg, st, text);
   if (st.await === 'amount' && st.d) {
     const a = parseAmount(text); if (a) remember(st);
     if (!a) return send(ctx, 'Не понял сумму. Напишите только число, например <code>150000</code> или <code>$50</code>.');
     st.d.amount = a.amount; if (a.cur) st.d.cur = a.cur; st.d.cur = st.d.cur || 'сум';
     return reshow(ctx, st);
+  }
+  if (st.await === 'book' && st.d) {
+    const y = parseDate(text);
+    if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>28.11</code>.');
+    remember(st); st.d.book = y; return reshow(ctx, st);
   }
   if (st.await === 'date' && st.d) {
     const y = parseDate(text);
@@ -333,7 +478,8 @@ async function onMessage(ctx, m) {
   }
   return startDraft(ctx, cfg, st.dir || null, text);   // без выбранного направления: одна запись — спросим кнопкой, несколько — направление по смыслу
 }
-const complete = d => d.type && d.amount != null && (d.type === 'Между своими' ? d.from && d.to : d.cat && (d.type === 'Расход' ? d.from : d.to));
+const complete = d => d.dir && d.type && d.amount != null && (d.type === 'Между своими' ? d.from && d.to
+  : (!needsCat(d.type) || d.cat) && (isOut(d.type) ? d.from : d.to) && (d.type !== 'Предоплата' || d.book));
 async function reshow(ctx, st) {
   if (!complete(st.d)) return askNext(ctx, await config(ctx), st);
   st.await = null; await putSt(ctx, st);
@@ -345,6 +491,7 @@ function draftFrom(cfg, dir, p, text, single) {
     type: TYPES.includes(p.type) ? p.type : null, amount: typeof p.amount === 'number' && p.amount > 0 ? p.amount : null,
     cur: p.currency === '$' ? '$' : 'сум', date: parseDate(p.date) || todayYmd(), comment: piece.slice(0, 200), src: 'текст',
     time: nowT().toISOString().slice(11, 16) };
+  if (d.type === 'Предоплата' && p.book) { d.book = parseDate(p.book); if (d.date === d.book) d.date = todayYmd(); }  // дата операции ≠ дата брони
   if (d.amount == null && single) { const a = parseAmount((text.match(/\$?\d[\d\s.,]*\s*(к|тыс|млн|\$)?/i) || [''])[0]); if (a && a.amount) { d.amount = a.amount; if (a.cur) d.cur = a.cur; } }
   if (d.type && d.dir) {
     const pool = cfg.cats.filter(x => x.dir === d.dir && x.kind === d.type);
@@ -353,24 +500,25 @@ function draftFrom(cfg, dir, p, text, single) {
       else if (hits.length > 1 && new Set(hits.map(x => x.group)).size === 1) { d.group = hits[0].group; } }
     if (c) { d.group = c.group; d.cat = c.cat; }
   }
-  const ok = (c, side) => c && (d.type === 'Доход' ? c.inc.includes(d.dir) : d.type === 'Расход' ? c.exp.includes(d.dir) : true) ? c.name : null;
+  const ok = c => c && (isIn(d.type) ? c.inc.includes(d.dir) : isOut(d.type) ? c.exp.includes(d.dir) : true) ? c.name : null;
   let cf = matchCard(cfg, p.card_from), ct = matchCard(cfg, p.card_to);
   if (!cf && !ct && d.type !== 'Между своими') cf = ct = cardInText(cfg, piece);
   if (d.type === 'Между своими') { if (cf) d.from = cf.name; if (ct) d.to = ct.name; }
-  if (d.type === 'Доход') d.to = ok(ct) || ok(cf);
-  if (d.type === 'Расход') d.from = ok(cf) || ok(ct);
+  if (isIn(d.type)) d.to = ok(ct) || ok(cf);
+  if (isOut(d.type)) d.from = ok(cf) || ok(ct);
   return d;
 }
 // направление выбрано позже — заново поискать категорию и карту по тексту записи
 function refill(cfg, d) {
   if (!d.type) return;
+  if (!needsCat(d.type)) { const c = cardInText(cfg, d.comment); if (c && isOut(d.type) && !d.from) d.from = c.name; if (c && isIn(d.type) && !d.to) d.to = c.name; return; }
   const pool = cfg.cats.filter(x => x.dir === d.dir && x.kind === d.type);
   if (!d.cat) { const hits = pool.filter(x => said(d.comment, x, pool));
     if (hits.length === 1) { d.group = hits[0].group; d.cat = hits[0].cat; }
     else if (hits.length > 1 && new Set(hits.map(x => x.group)).size === 1) d.group = hits[0].group; }
   const c = cardInText(cfg, d.comment);
-  if (c && d.type === 'Расход' && !d.from && c.exp.includes(d.dir)) d.from = c.name;
-  if (c && d.type === 'Доход' && !d.to && c.inc.includes(d.dir)) d.to = c.name;
+  if (c && isOut(d.type) && !d.from && c.exp.includes(d.dir)) d.from = c.name;
+  if (c && isIn(d.type) && !d.to && c.inc.includes(d.dir)) d.to = c.name;
 }
 async function startDraft(ctx, cfg, dir, text, src) {
   let recs = [];
@@ -405,6 +553,7 @@ async function onCallback(ctx, q) {
     await putSt(ctx, { dir });
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`);
   }
+  if (k === 'bk' && st.tool) { await edit(ctx, mid, '↩️ Назад'); await putSt(ctx, {}); return dirMenu(ctx); }
   if (k === 'bk') {
     await edit(ctx, mid, '↩️ Назад');
     if (st.editDir) { st.editDir = false; return reshow(ctx, st); }
@@ -426,6 +575,7 @@ async function onCallback(ctx, q) {
     d.cat = subs[+v].cat; await edit(ctx, mid, `🏷 ${d.group} / ${d.cat}`); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st);
   }
   if (k === 'k') { const c = cfg.cards[+v]; d[st.side] = c.name; await edit(ctx, mid, '💳 ' + c.name); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
+  if (k === 'bd') { d.book = shiftYmd(todayYmd(), Number(v)); await edit(ctx, mid, '🗓 ' + human(d.book)); return reshow(ctx, st); }
   if (k === 'dt') { d.date = v === '0' ? todayYmd() : shiftYmd(todayYmd(), -Number(v)); await edit(ctx, mid, '📅 ' + human(d.date)); return reshow(ctx, st); }
   if (k === 'no') { await edit(ctx, mid, '❌ Отменено, эту запись не записал.'); return nextOrMenu(ctx, cfg, st); }
   if (k === 'ok') {
@@ -448,8 +598,8 @@ async function onCallback(ctx, q) {
     if (v === 'c') return askGroup(ctx, cfg, st);
     if (v === 'n') { st.editDir = true; await putSt(ctx, st); return send(ctx, 'Новое направление:', withBack([[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']]])); }
     if (v === 'd') { st.await = 'date'; await putSt(ctx, st); return send(ctx, '📅 Дата? Нажмите кнопку или напишите, например, <code>24.11</code>.', withBack([[['Сегодня', 'dt:0'], ['Вчера', 'dt:1'], ['Позавчера', 'dt:2']]])); }
-    if (v === 't') return send(ctx, 'Тип записи:', withBack([TYPES.map((t, i) => [TLABEL(t), 'ty:' + i])]));
-    if (v === 'k') { const side = d.type === 'Доход' ? 'to' : 'from';
+    if (v === 't') return send(ctx, 'Тип записи:', withBack(typeRows()));
+    if (v === 'k') { const side = isIn(d.type) ? 'to' : 'from';
       if (d.type === 'Между своими') { d.from = d.to = null; return askNext(ctx, cfg, st); }
       return askCard(ctx, cfg, st, side, '💳 Какая карта?'); }
     return reshow(ctx, st);
@@ -458,8 +608,7 @@ async function onCallback(ctx, q) {
 }
 async function afterEdit(ctx, cfg, st) { // после правки: дозаполнить недостающее, потом итог
   const d = st.d;
-  if ((d.type !== 'Между своими' && !d.cat) || (d.type === 'Расход' && !d.from) || (d.type === 'Доход' && !d.to) || (d.type === 'Между своими' && (!d.from || !d.to)))
-    return askNext(ctx, cfg, st);
+  if (!complete(d)) return askNext(ctx, cfg, st);
   return reshow(ctx, st);
 }
 
@@ -472,6 +621,8 @@ async function onSavedButton(ctx, q) {
   if (k === 'rmy') {
     const [f] = await gas(ctx, [{ op: 'find', sheet: 'Журнал', col: 'A', value: id }]);
     if (f.row) await gas(ctx, [{ op: 'set', sheet: 'Журнал', range: `M${f.row}`, values: [['удалено']] }]);
+    const [z] = await gas(ctx, [{ op: 'find', sheet: 'Залоги и предоплаты', col: 'A', value: id }]);
+    if (z.row) await gas(ctx, [{ op: 'set', sheet: 'Залоги и предоплаты', range: `H${z.row}`, values: [['удалено']] }]);
     return edit(ctx, mid, `🗑 Запись ${id} удалена. Итоги в таблице пересчитаны.`);
   }
   if (k === 'fx') {
@@ -493,6 +644,7 @@ async function handle(ctx, upd) {
   }
   if (q && q.message) { ctx.orig = q.message.text || ''; ctx.origMid = q.message.message_id; }
   try {
+    if (q && /^(zl|adj|aj|zr|zry|zp|zk|pc|pb|p0|pk)(:|$)/.test(q.data)) return await onTool(ctx, q);
     if (q) return /^(rm|rmy|rmn|fx):/.test(q.data) ? await onSavedButton(ctx, q) : await onCallback(ctx, q);
     return await onMessage(ctx, m);
   } catch (e) {
@@ -512,6 +664,7 @@ export class State {
 }
 
 export default {
+  async scheduled(ev, env, ectx) { ectx.waitUntil(morning(env)); },
   async fetch(req, env, ectx) {
     const u = new URL(req.url);
     if (u.pathname === '/tg' && req.method === 'POST') {
@@ -537,6 +690,7 @@ export default {
       try { return Response.json({ text: u.searchParams.get('t') === 'photo' ? await readReceipt(ctx, bytes) : await transcribe(ctx, bytes), raw: ctx.raw }); }
       catch (e) { return Response.json({ error: String(e && e.stack || e) }); }
     }
+    if (u.pathname === '/morning') { await morning(env); return new Response('done'); }
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
     return new Response('ok');
   },
