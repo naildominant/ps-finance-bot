@@ -30,5 +30,5 @@ Total UZS (excl. Ars): 20 905 944.41; foreign (залог) 150 000
 - Open: ad limit base «1% оборота» uses current-month PS SHOP income for now (question #3 pending). Apps Script not yet installed.
 
 ## Card names (owner 25.11) — sheet Карты col A, journal uses exactly these
-Приёмка (NBU 4408) · Поставщик (VISA 0233) · Расходка (NBU 6440) · Ипак 9783 · Узум вклад (reserve deposit) · Узум (UZUM 9028) · Капитал (Kapitalbank 2660) · Булка (UZUM Bulka) · Нал · Доллары.
+Приёмка (NBU 4408) · Поставщик (VISA 0233) · Расходка (NBU 6440) · Ипак 9783 · UZUM вклад (reserve deposit) · Узум (UZUM 9028) · Капитал (Kapitalbank 2660) · Булка (UZUM Bulka) · Нал · Доллары.
 Bot must match by short name, bank or last digits. Main sheet has 3 charts (month by direction, balances, personal by group); helper data Главная!H4:J21.
