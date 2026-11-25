@@ -289,7 +289,7 @@ async function askCard(ctx, cfg, st, side, q) {
   await send(ctx, q, withBack(chunk((list.length ? list : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [c.name, 'k:' + i]), 2)));
 }
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
-const dirMenu = ctx => send(ctx, 'Выберите направление записи:', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📋 Залоги и брони', 'zl'], ['🧮 Остаток карты', 'adj']], [['🧾 Закрыл оплату поставщику', 'sup']], [['📊 Открыть таблицу', SHEET_URL]]]);
+const dirMenu = ctx => send(ctx, 'Выберите направление записи:', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['🧮 Остаток карты', 'adj']], [['📊 Открыть таблицу', SHEET_URL]]]);
 
 // ---------- Запись в таблицу ----------
 async function save(ctx, cfg, d) {
@@ -736,7 +736,8 @@ async function onCallback(ctx, q) {
     await edit(ctx, mid, '🏢 ' + dir);
     if (st.pending) return startDraft(ctx, cfg, dir, st.pending);
     await putSt(ctx, { dir });
-    return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`);
+    const extra = dir === 'PS SHOP' ? [[['🧾 Закрыл оплату поставщику', 'sup']]] : dir === 'Аренда PS5' ? [[['📋 Залоги и брони', 'zl']]] : undefined;
+    return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
   if (k === 'bk' && st.tool) { await edit(ctx, mid, '↩️ Назад'); await putSt(ctx, {}); return dirMenu(ctx); }
   if (k === 'bk') {
