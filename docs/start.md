@@ -3,7 +3,7 @@ Decisions: USD rate = CBU auto (rate on op date); nested categories (Лично�
 Balances:
 - NBU 4408: 0
 - VISA 0233: 40 540
-- NBU 6440: 0.62
+- NBU 6440: 0.62 → set to 0 (owner 26.11: tiyins, show 0; Карты!D4 = 0)
 - Ipak Yo'li 9783: 0
 - PS Shop резерв = Uzum deposit "Вклад до 13,8%" (flexible, has Вывести): 500 000 (funded 25.11 from UZUM 9028; no card digits, name only; monthly ask balance -> interest income)
 - UZUM 9028: 206 218.19 (screenshot 20:56)
