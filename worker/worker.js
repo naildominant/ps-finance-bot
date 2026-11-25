@@ -289,7 +289,7 @@ async function askCard(ctx, cfg, st, side, q) {
   await send(ctx, q, withBack(chunk((list.length ? list : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [c.name, 'k:' + i]), 2)));
 }
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
-const dirMenu = ctx => send(ctx, '💵ГЛАВНОЕ МЕНЮ 💵', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['🧮 Остаток карты', 'adj']], [['📊 Открыть таблицу', SHEET_URL]]]);
+const dirMenu = ctx => send(ctx, '<b>💵 ГЛАВНОЕ МЕНЮ 💵</b>', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['🧮 Остаток карты', 'adj']], [['📊 Открыть таблицу', SHEET_URL]]]);
 
 // ---------- Запись в таблицу ----------
 async function save(ctx, cfg, d) {
@@ -628,7 +628,9 @@ async function onMessage(ctx, m) {
   const cfg = await config(ctx);
   const text = (m.text || '').trim();
   let st = await getSt(ctx);
-  if (text === '/start' || text === '/menu' || /^(отмена|стоп)$/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
+  const ce = (m.entities || []).filter(e => e.type === 'custom_emoji');   // id премиум-эмодзи владельца (для меню)
+  if (ce.length && !ctx.dry) await ctx.env.KV.put('ce', JSON.stringify({ text, ids: ce.map(e => [e.offset, e.length, e.custom_emoji_id]) }));
+  if (text === '/start' || text === '/menu' || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
   if (m.voice || m.audio || m.video_note) {
     const f = m.voice || m.audio || m.video_note;
     const said = await transcribe(ctx, await tgFile(ctx, f.file_id));
