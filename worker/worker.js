@@ -93,6 +93,44 @@ function parseAmount(s) {
   return { amount: n, cur: m[3] && /\$|долл/.test(m[3]) ? '$' : null };
 }
 
+// ---------- Голос и фото ----------
+const WHISPER = '@cf/openai/whisper-large-v3-turbo';
+let VISION = '@cf/mistralai/mistral-small-3.1-24b-instruct';   // читает чеки точнее llama-3.2-vision (проверено 26.11)
+async function tgFile(ctx, fileId) {
+  const j = await (await fetch(`https://api.telegram.org/bot${ctx.env.BOT_TOKEN}/getFile?file_id=${fileId}`)).json();
+  if (!j.ok) throw new Error('не смог скачать файл из Telegram');
+  return new Uint8Array(await (await fetch(`https://api.telegram.org/file/bot${ctx.env.BOT_TOKEN}/${j.result.file_path}`)).arrayBuffer());
+}
+function b64(bytes) { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); }
+async function transcribe(ctx, bytes) {
+  const r = await ctx.env.AI.run(WHISPER, { audio: b64(bytes), language: 'ru', vad_filter: true });
+  return String(r.text || '').trim();
+}
+// Чек или скриншот перевода → короткий текст для обычного разбора
+async function readReceipt(ctx, bytes) {
+  const prompt = `Read this receipt or bank transfer screenshot (Uzbekistan, amounts in UZS "сум"). Return ONLY JSON:
+{"incoming": true ONLY if the image explicitly says money was RECEIVED (зачисление, поступление, входящий, пополнение, "+" before amount), otherwise false,"own_transfer": true only if it is a transfer between the user's own cards,"total": number (the TOTAL / ИТОГО / amount paid, digits only),"date":"DD.MM.YYYY" or null,
+"merchant": shop or recipient name or null,"card_last4": 4 digits of the PAYMENT CARD (often after * or ****) or null,"items": short list of goods or purpose in Russian or null}
+A shop receipt is ALWAYS incoming=false. Receipt number, check number, terminal id are NOT card digits; the card is usually written like *1234 or **** 1234 near "карта/UZCARD/HUMO/VISA". Do not invent anything.`;
+  const url = 'data:image/jpeg;base64,' + b64(bytes);
+  const run = () => ctx.env.AI.run(VISION, { messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url } }] }], max_tokens: 200, temperature: 0 });
+  let r;
+  try { r = await run(); }
+  catch (e) { if (!/agree/i.test(String(e))) throw e; await ctx.env.AI.run(VISION, { prompt: 'agree' }); r = await run(); }
+  let j = r.response;
+  if (typeof j !== 'object' || !j) { const raw = String(j || r.description || ''); ctx.raw = raw;
+    const m = raw.match(/\{[\s\S]*\}/); if (!m) return ''; try { j = JSON.parse(m[0]); } catch (e) { return ''; } }
+  ctx.raw = j;
+  if (!j.total) return '';
+  const kind = j.own_transfer === true ? 'перевод между своими картами' : j.incoming === true ? 'пришло' : 'расход';
+  const parts = [`${kind} ${String(j.total).replace(/[^\d.]/g, '')} сум`];
+  if (j.items) parts.push([].concat(j.items).join(', '));
+  if (j.merchant) parts.push((j.incoming === true ? 'от ' : '') + j.merchant);
+  if (j.date) parts.push('дата ' + j.date);
+  if (j.card_last4 && /^\d{4}$/.test(String(j.card_last4))) parts.push('карта ' + j.card_last4);
+  return parts.join(', ');
+}
+
 // ---------- Разбор текста ИИ (одна или несколько записей) ----------
 async function aiParse(ctx, cfg, dir, text) {
   const catList = (dd, k) => [...new Set(cfg.cats.filter(c => c.dir === dd && c.kind === k).map(c => c.group === c.cat ? c.cat : `${c.group} / ${c.cat}`))].join('; ');
@@ -126,7 +164,8 @@ function matchCat(cfg, d, s) {
       || pool.find(c => c.group === c.cat && c.group.toLowerCase() === s) || null;
 }
 // категория считается названной, если в тексте есть слово, похожее на слово из названия (первые 4 буквы)
-const SYN = { 'Продукты': ['продукт', 'еда', 'магазин', 'корзин'], 'Квартира': ['квартир', 'аренд', 'коммун', 'свет', 'газ', 'интернет', 'связь'], 'Такси': ['такси', 'яндекс'] };
+const SYN = { 'Продукты': ['продукт', 'еда', 'магазин', 'корзин', 'makro', 'макро', 'havas', 'хавас', 'молок', 'хлеб', 'сыр', 'яйц', 'мясо', 'овощ', 'фрукт'],
+  'Здоровье': ['аптек', 'лекарств', 'врач', 'стомат', 'зуб'], 'Красота': ['маникюр', 'ногт'], 'Квартира': ['квартир', 'аренд', 'коммун', 'свет', 'газ', 'интернет', 'связь'], 'Такси': ['такси', 'яндекс'] };
 // слова, общие с соседними категориями (например «Игры» у «Игры PS5» и «Игры PS4»), не считаются — нужно отличающее слово
 function said(text, c, pool) {
   const t = text.toLowerCase().replace(/ё/g, 'е');
@@ -257,7 +296,24 @@ async function onMessage(ctx, m) {
   const text = (m.text || '').trim();
   let st = await getSt(ctx);
   if (text === '/start' || text === '/menu' || /^(отмена|стоп)$/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
-  if (m.voice || m.audio || m.photo || m.document) return send(ctx, 'Голосовые и фото подключу на следующем этапе. Пока напишите текстом.');
+  if (m.voice || m.audio || m.video_note) {
+    const f = m.voice || m.audio || m.video_note;
+    const said = await transcribe(ctx, await tgFile(ctx, f.file_id));
+    if (!said) return send(ctx, '🎤 Не расслышал. Попробуйте ещё раз или напишите текстом.');
+    await send(ctx, '🎤 ' + esc(said));
+    if (st.await && st.d) return onMessage(ctx, { ...m, voice: null, audio: null, video_note: null, text: said });
+    return startDraft(ctx, cfg, st.dir || null, said, 'голос');
+  }
+  const img = m.photo ? m.photo[m.photo.length - 1] : (m.document && /^image\//.test(m.document.mime_type || '') ? m.document : null);
+  if (img) {
+    await send(ctx, '📷 Читаю фото…');
+    const seen = await readReceipt(ctx, await tgFile(ctx, img.file_id));
+    if (!seen) return send(ctx, '📷 Не смог прочитать. Пришлите фото чётче или напишите текстом.');
+    const full = (m.caption ? m.caption + '. ' : '') + seen;
+    await send(ctx, '📷 На фото: ' + esc(seen));
+    return startDraft(ctx, cfg, st.dir || null, full, 'фото');
+  }
+  if (m.document) return send(ctx, 'Этот файл я не читаю. Пришлите фото, голосовое или текст.');
   if (!text) return;
   if (st.await === 'amount' && st.d) {
     const a = parseAmount(text); if (a) remember(st);
@@ -294,12 +350,13 @@ function draftFrom(cfg, dir, p, text, single) {
   if (d.type === 'Расход') d.from = ok(cf) || ok(ct);
   return d;
 }
-async function startDraft(ctx, cfg, dir, text) {
+async function startDraft(ctx, cfg, dir, text, src) {
   let recs = [];
   try { recs = await aiParse(ctx, cfg, dir, text); } catch (e) { recs = []; }
   if (!recs.length) recs = [{}];
   const single = recs.length === 1;
   const drafts = recs.map(p => draftFrom(cfg, dir, p, text, single));
+  if (src) drafts.forEach(d => { d.src = src; });
   if (!single) await send(ctx, `Нашёл ${drafts.length} записи. Покажу по очереди, каждую подтвердите ✅.`);
   drafts.forEach((d, i) => { d.n = i + 1; d.of = drafts.length; });
   const st = { dir: null, d: drafts[0], queue: drafts.slice(1) };
@@ -451,6 +508,12 @@ export default {
       const ctx = { env, dry: true, out: [] };
       await handle(ctx, await req.json());
       return Response.json(ctx.out);
+    }
+    if (u.pathname === '/testai' && req.method === 'POST') {   // проверка распознавания: ?t=voice|photo, тело — файл
+      const bytes = new Uint8Array(await req.arrayBuffer()), ctx = { env };
+      if (u.searchParams.get('m')) VISION = u.searchParams.get('m');
+      try { return Response.json({ text: u.searchParams.get('t') === 'photo' ? await readReceipt(ctx, bytes) : await transcribe(ctx, bytes), raw: ctx.raw }); }
+      catch (e) { return Response.json({ error: String(e && e.stack || e) }); }
     }
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
     return new Response('ok');
