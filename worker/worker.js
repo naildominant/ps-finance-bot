@@ -61,8 +61,8 @@ const nowT = () => new Date(Date.now() + TZ_MS);                       // «ча
 const ymdT = d => d.toISOString().slice(0, 10);
 const todayYmd = () => ymdT(nowT());
 const shiftYmd = (ymd, days) => ymdT(new Date(Date.parse(ymd) + days * DAY));
-const human = ymd => { const t = todayYmd(); if (ymd === t) return 'сегодня'; if (ymd === shiftYmd(t, -1)) return 'вчера';
-  const [y, m, d] = ymd.split('-'); return `${d}.${m}.${y}`; };
+const human = ymd => { const [y, m, d] = ymd.split('-'); const t = todayYmd();
+  return `${d}.${m}.${y}` + (ymd === t ? ' (сегодня)' : ymd === shiftYmd(t, -1) ? ' (вчера)' : ''); };
 function parseDate(s) {
   s = String(s || '').trim().toLowerCase();
   if (!s || s === 'сегодня') return todayYmd();
@@ -114,6 +114,14 @@ function matchCat(cfg, d, s) {
   return pool.find(c => `${c.group} / ${c.cat}`.toLowerCase() === s || c.cat.toLowerCase() === s)
       || pool.find(c => c.group === c.cat && c.group.toLowerCase() === s) || null;
 }
+// категория считается названной, если в тексте есть слово, похожее на слово из названия (первые 4 буквы)
+const SYN = { 'Продукты': ['продукт', 'еда', 'магазин', 'корзин'], 'Квартира': ['квартир', 'аренд', 'коммун', 'свет', 'газ', 'интернет', 'связь'], 'Такси': ['такси', 'яндекс'] };
+function said(text, c) {
+  const t = text.toLowerCase().replace(/ё/g, 'е');
+  const words = (c.group + ' ' + c.cat).toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-я0-9]+/).filter(w => w.length >= 3 && !['для', 'игр'].includes(w));
+  const stems = words.map(w => w.slice(0, Math.min(5, Math.max(3, w.length - 2)))).concat(SYN[c.group] || []);
+  return stems.some(st => t.includes(st));
+}
 function matchCard(cfg, s) {
   if (!s) return null;
   s = String(s).toLowerCase();
@@ -131,6 +139,9 @@ async function store(ctx, body) {
   return r.json();
 }
 const getSt = async ctx => (await store(ctx, { op: 'get', k: stKey(ctx) })) || {};
+const BACK = ['↩️ Назад', 'bk'];
+const withBack = rows => [...(rows || []), [BACK]];
+function remember(st) { st.hist = (st.hist || []).slice(-15); st.hist.push(JSON.stringify(st.d)); }
 const putSt = (ctx, st) => store(ctx, { op: 'put', k: stKey(ctx), v: st });
 
 function summary(d) {
@@ -151,26 +162,26 @@ function summary(d) {
 async function askNext(ctx, cfg, st) {
   const d = st.d;
   if (!d.type) { st.await = null; await putSt(ctx, st);
-    return void await send(ctx, 'Это доход, расход или перевод между своими картами?', [TYPES.map((t, i) => [t, 'ty:' + i])]); }
+    return void await send(ctx, 'Это доход, расход или перевод между своими картами?', withBack([TYPES.map((t, i) => [t, 'ty:' + i])])); }
   if (d.amount == null) { st.await = 'amount'; await putSt(ctx, st);
-    return void await send(ctx, '💰 Какая сумма? Напишите число, например <code>150000</code> или <code>$50</code>.'); }
+    return void await send(ctx, '💰 Какая сумма? Напишите число, например <code>150000</code> или <code>$50</code>.', withBack()); }
   if (d.type !== 'Между своими' && !d.cat) return void await askGroup(ctx, cfg, st);
   if (d.type === 'Между своими' && !d.from) return void await askCard(ctx, cfg, st, 'from', 'С какой карты?');
   if (d.type === 'Между своими' && !d.to) return void await askCard(ctx, cfg, st, 'to', 'На какую карту?');
   if (d.type === 'Расход' && !d.from) return void await askCard(ctx, cfg, st, 'from', '💳 С какой карты или наличными?');
   if (d.type === 'Доход' && !d.to) return void await askCard(ctx, cfg, st, 'to', '💳 На какую карту пришли деньги?');
   st.await = null; await putSt(ctx, st);
-  await send(ctx, summary(d), [[['✅ Записать', 'ok'], ['❌ Отменить', 'no'], ['✏️ Правка', 'ed']]]);
+  await send(ctx, summary(d), [[['✅ Записать', 'ok'], ['❌ Отменить', 'no'], ['✏️ Правка', 'ed']], [BACK]]);
   return true;
 }
 async function askGroup(ctx, cfg, st) {
   const groups = [...new Set(cfg.cats.filter(c => c.dir === st.d.dir && c.kind === st.d.type).map(c => c.group))];
   st.await = null; st.groups = groups; await putSt(ctx, st);
-  await send(ctx, '🏷 Категория?', chunk(groups.map((g, i) => [g, 'g:' + i]), 2));
+  await send(ctx, '🏷 Категория?', withBack(chunk(groups.map((g, i) => [g, 'g:' + i]), 2)));
 }
 async function askCard(ctx, cfg, st, side, q) {
   st.await = null; st.side = side; await putSt(ctx, st);
-  await send(ctx, q, chunk(cfg.cards.map((c, i) => [c.name, 'k:' + i]), 2));
+  await send(ctx, q, withBack(chunk(cfg.cards.map((c, i) => [c.name, 'k:' + i]), 2)));
 }
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
 const dirMenu = ctx => send(ctx, 'Выберите направление записи:', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']]]);
@@ -221,7 +232,7 @@ async function onMessage(ctx, m) {
   if (m.voice || m.audio || m.photo || m.document) return send(ctx, 'Голосовые и фото подключу на следующем этапе. Пока напишите текстом.');
   if (!text) return;
   if (st.await === 'amount' && st.d) {
-    const a = parseAmount(text);
+    const a = parseAmount(text); if (a) remember(st);
     if (!a) return send(ctx, 'Не понял сумму. Напишите только число, например <code>150000</code> или <code>$50</code>.');
     st.d.amount = a.amount; if (a.cur) st.d.cur = a.cur; st.d.cur = st.d.cur || 'сум';
     return reshow(ctx, st);
@@ -229,7 +240,7 @@ async function onMessage(ctx, m) {
   if (st.await === 'date' && st.d) {
     const y = parseDate(text);
     if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>24.11</code> или «вчера».');
-    st.d.date = y; return reshow(ctx, st);
+    remember(st); st.d.date = y; return reshow(ctx, st);
   }
   if (!st.dir) { await putSt(ctx, { pending: text }); return dirMenu(ctx); }
   return startDraft(ctx, cfg, st.dir, text);
@@ -238,15 +249,15 @@ const complete = d => d.type && d.amount != null && (d.type === 'Между св
 async function reshow(ctx, st) {
   if (!complete(st.d)) return askNext(ctx, await config(ctx), st);
   st.await = null; await putSt(ctx, st);
-  return send(ctx, summary(st.d), [[['✅ Записать', 'ok'], ['❌ Отменить', 'no'], ['✏️ Правка', 'ed']]]); }
+  return send(ctx, summary(st.d), [[['✅ Записать', 'ok'], ['❌ Отменить', 'no'], ['✏️ Правка', 'ed']], [BACK]]); }
 
 async function startDraft(ctx, cfg, dir, text) {
   let p = {};
   try { p = await aiParse(ctx, cfg, dir, text); } catch (e) { p = {}; }
   const d = { dir, type: TYPES.includes(p.type) ? p.type : null, amount: typeof p.amount === 'number' && p.amount > 0 ? p.amount : null,
-    cur: p.currency === '$' ? '$' : 'сум', date: parseDate(p.date) || todayYmd(), comment: p.comment || text.slice(0, 120), src: 'текст' };
+    cur: p.currency === '$' ? '$' : 'сум', date: parseDate(p.date) || todayYmd(), comment: text.slice(0, 200), src: 'текст' };
   if (d.amount == null) { const a = parseAmount((text.match(/\$?\d[\d\s.,]*\s*(к|тыс|млн|\$)?/i) || [''])[0]); if (a && a.amount) { d.amount = a.amount; if (a.cur) d.cur = a.cur; } }
-  if (d.type) { const c = matchCat(cfg, d, p.category); if (c) { d.group = c.group; d.cat = c.cat; } }
+  if (d.type) { const c = matchCat(cfg, d, p.category); if (c && said(text, c)) { d.group = c.group; d.cat = c.cat; } }
   const cf = matchCard(cfg, p.card_from), ct = matchCard(cfg, p.card_to);
   if (cf) d.from = cf.name; if (ct) d.to = ct.name;
   if (d.type === 'Доход' && !d.to && cf) d.to = cf.name;
@@ -269,14 +280,21 @@ async function onCallback(ctx, q) {
     await putSt(ctx, { dir });
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`);
   }
+  if (k === 'bk') {
+    await tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } });
+    if (st.editDir) { st.editDir = false; return reshow(ctx, st); }
+    if (st.hist && st.hist.length) { st.d = JSON.parse(st.hist.pop()); st.await = null; return complete(st.d) ? reshow(ctx, st) : askNext(ctx, cfg, st); }
+    await putSt(ctx, {}); return dirMenu(ctx);
+  }
   if (!st.d) return edit(ctx, mid, 'Эта запись уже закрыта. Нажмите /menu, чтобы начать новую.');
+  if (['ty', 'g', 's', 'k', 'dt'].includes(k)) remember(st);
   const d = st.d;
   if (k === 'ty') { d.type = TYPES[+v]; d.group = d.cat = null; await edit(ctx, mid, '🔄 ' + d.type); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
   if (k === 'g') {
     const g = st.groups[+v]; const subs = cfg.cats.filter(c => c.dir === d.dir && c.kind === d.type && c.group === g);
     if (subs.length === 1) { d.group = g; d.cat = subs[0].cat; await edit(ctx, mid, '🏷 ' + g); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
     d.group = g; await putSt(ctx, st);
-    return edit(ctx, mid, `🏷 ${g}: что именно?`, chunk(subs.map((c, i) => [c.cat, 's:' + i]), 2));
+    return edit(ctx, mid, `🏷 ${g}: что именно?`, withBack(chunk(subs.map((c, i) => [c.cat, 's:' + i]), 2)));
   }
   if (k === 's') {
     const subs = cfg.cats.filter(c => c.dir === d.dir && c.kind === d.type && c.group === d.group);
@@ -298,15 +316,16 @@ async function onCallback(ctx, q) {
   }
   if (k === 'ed') {
     st.editing = true; await putSt(ctx, st);
+    remember(st); await putSt(ctx, st);
     return edit(ctx, mid, summary(d) + '\n\nЧто исправить?', [[['💰 Сумма', 'e:a'], ['🏷 Категория', 'e:c']], [['🏢 Направление', 'e:n'], ['📅 Дата', 'e:d']], [['🔄 Тип', 'e:t'], ['💳 Карта', 'e:k']], [['↩️ Назад', 'e:b']]]);
   }
   if (k === 'e') {
     await edit(ctx, mid, summary(d));
-    if (v === 'a') { st.await = 'amount'; await putSt(ctx, st); return send(ctx, '💰 Новая сумма? Например <code>150000</code> или <code>$50</code>.'); }
+    if (v === 'a') { st.await = 'amount'; await putSt(ctx, st); return send(ctx, '💰 Новая сумма? Например <code>150000</code> или <code>$50</code>.', withBack()); }
     if (v === 'c') return askGroup(ctx, cfg, st);
-    if (v === 'n') { st.editDir = true; await putSt(ctx, st); return send(ctx, 'Новое направление:', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']]]); }
-    if (v === 'd') { st.await = 'date'; await putSt(ctx, st); return send(ctx, '📅 Дата? Нажмите кнопку или напишите, например, <code>24.11</code>.', [[['Сегодня', 'dt:0'], ['Вчера', 'dt:1'], ['Позавчера', 'dt:2']]]); }
-    if (v === 't') return send(ctx, 'Тип записи:', [TYPES.map((t, i) => [t, 'ty:' + i])]);
+    if (v === 'n') { st.editDir = true; await putSt(ctx, st); return send(ctx, 'Новое направление:', withBack([[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']]])); }
+    if (v === 'd') { st.await = 'date'; await putSt(ctx, st); return send(ctx, '📅 Дата? Нажмите кнопку или напишите, например, <code>24.11</code>.', withBack([[['Сегодня', 'dt:0'], ['Вчера', 'dt:1'], ['Позавчера', 'dt:2']]])); }
+    if (v === 't') return send(ctx, 'Тип записи:', withBack([TYPES.map((t, i) => [t, 'ty:' + i])]));
     if (v === 'k') { const side = d.type === 'Доход' ? 'to' : 'from';
       if (d.type === 'Между своими') { d.from = d.to = null; return askNext(ctx, cfg, st); }
       return askCard(ctx, cfg, st, side, '💳 Какая карта?'); }
