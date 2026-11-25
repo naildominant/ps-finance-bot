@@ -230,6 +230,10 @@ async function askNext(ctx, cfg, st) {
     return void await send(ctx, 'Это доход, расход или перевод между своими картами?', withBack([TYPES.map((t, i) => [TLABEL(t), 'ty:' + i])])); }
   if (d.amount == null) { st.await = 'amount'; await putSt(ctx, st);
     return void await send(ctx, '💰 Какая сумма? Напишите число, например <code>150000</code> или <code>$50</code>.', withBack()); }
+  if (d.type !== 'Между своими' && !d.cat && d.group) {
+    const subs = cfg.cats.filter(c => c.dir === d.dir && c.kind === d.type && c.group === d.group);
+    if (subs.length) { st.await = null; await putSt(ctx, st); return void await send(ctx, `🏷 ${d.group}: что именно?`, withBack(chunk(subs.map((c, i) => [c.cat, 's:' + i]), 2))); }
+  }
   if (d.type !== 'Между своими' && !d.cat) return void await askGroup(ctx, cfg, st);
   if (d.type === 'Между своими' && !d.from) return void await askCard(ctx, cfg, st, 'from', 'С какой карты?');
   if (d.type === 'Между своими' && !d.to) return void await askCard(ctx, cfg, st, 'to', 'На какую карту?');
@@ -341,7 +345,13 @@ function draftFrom(cfg, dir, p, text, single) {
     cur: p.currency === '$' ? '$' : 'сум', date: parseDate(p.date) || todayYmd(), comment: piece.slice(0, 200), src: 'текст',
     time: nowT().toISOString().slice(11, 16) };
   if (d.amount == null && single) { const a = parseAmount((text.match(/\$?\d[\d\s.,]*\s*(к|тыс|млн|\$)?/i) || [''])[0]); if (a && a.amount) { d.amount = a.amount; if (a.cur) d.cur = a.cur; } }
-  if (d.type && d.dir) { const c = matchCat(cfg, d, p.category); if (c && said(piece, c, cfg.cats.filter(x => x.dir === d.dir && x.kind === d.type))) { d.group = c.group; d.cat = c.cat; } }
+  if (d.type && d.dir) {
+    const pool = cfg.cats.filter(x => x.dir === d.dir && x.kind === d.type);
+    let c = matchCat(cfg, d, p.category); if (c && !said(piece, c, pool)) c = null;
+    if (!c) { const hits = pool.filter(x => said(piece, x, pool)); if (hits.length === 1) c = hits[0];   // ИИ не назвал — ищем по словам
+      else if (hits.length > 1 && new Set(hits.map(x => x.group)).size === 1) { d.group = hits[0].group; } }
+    if (c) { d.group = c.group; d.cat = c.cat; }
+  }
   const ok = (c, side) => c && (d.type === 'Доход' ? c.inc.includes(d.dir) : d.type === 'Расход' ? c.exp.includes(d.dir) : true) ? c.name : null;
   let cf = matchCard(cfg, p.card_from), ct = matchCard(cfg, p.card_to);
   if (!cf && !ct && d.type !== 'Между своими') cf = ct = cardInText(cfg, piece);
@@ -349,6 +359,17 @@ function draftFrom(cfg, dir, p, text, single) {
   if (d.type === 'Доход') d.to = ok(ct) || ok(cf);
   if (d.type === 'Расход') d.from = ok(cf) || ok(ct);
   return d;
+}
+// направление выбрано позже — заново поискать категорию и карту по тексту записи
+function refill(cfg, d) {
+  if (!d.type) return;
+  const pool = cfg.cats.filter(x => x.dir === d.dir && x.kind === d.type);
+  if (!d.cat) { const hits = pool.filter(x => said(d.comment, x, pool));
+    if (hits.length === 1) { d.group = hits[0].group; d.cat = hits[0].cat; }
+    else if (hits.length > 1 && new Set(hits.map(x => x.group)).size === 1) d.group = hits[0].group; }
+  const c = cardInText(cfg, d.comment);
+  if (c && d.type === 'Расход' && !d.from && c.exp.includes(d.dir)) d.from = c.name;
+  if (c && d.type === 'Доход' && !d.to && c.inc.includes(d.dir)) d.to = c.name;
 }
 async function startDraft(ctx, cfg, dir, text, src) {
   let recs = [];
@@ -376,7 +397,7 @@ async function onCallback(ctx, q) {
   await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
   if (k === 'd') {                                   // направление
     const dir = DIRS[+v];
-    if (st.d && !st.d.dir) { remember(st); st.d.dir = dir; await edit(ctx, mid, '🏢 ' + dir); return askNext(ctx, cfg, st); }
+    if (st.d && !st.d.dir) { remember(st); st.d.dir = dir; refill(cfg, st.d); await edit(ctx, mid, '🏢 ' + dir); return askNext(ctx, cfg, st); }
     if (st.d && st.editDir) { st.d.dir = dir; st.d.group = st.d.cat = null; st.editDir = false; await edit(ctx, mid, '🏢 ' + dir); return st.d.type === 'Между своими' ? reshow(ctx, st) : askGroup(ctx, cfg, st); }
     await edit(ctx, mid, '🏢 ' + dir);
     if (st.pending) return startDraft(ctx, cfg, dir, st.pending);
