@@ -27,7 +27,20 @@ const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data]) => {
   if (STYLE[text]) b.style = STYLE[text];
   return /^https?:/.test(data) ? { ...b, url: data } : { ...b, callback_data: data }; })) });
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU/edit';
-const send = (ctx, text, rows) => tg(ctx, 'sendMessage', { chat_id: ctx.chat, text, parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
+const send = async (ctx, text, rows) => {
+  const r = await tg(ctx, 'sendMessage', { chat_id: ctx.chat, text, parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
+  if (ctx.trail && !ctx.noTrack && r && r.ok) ctx.trail.push(r.result.message_id);   // «лишнее» — сотрём при возврате в меню
+  return r;
+};
+// чистый чат (владелец 26.11): нажатая кнопка-вопрос удаляется; подсказки и сообщения владельца стираются при возврате в меню.
+// Остаются: «✅ Записано», расчёты долей, эмодзи дохода/расхода.
+const gone = (ctx, mid) => tg(ctx, 'deleteMessage', { chat_id: ctx.chat, message_id: mid }).catch(() => {});
+async function purge(ctx) {
+  const ids = [...((await store(ctx, { op: 'get', k: 'trail' })) || []), ...(ctx.trail || [])].filter(i => !(ctx.keep || []).includes(i));
+  if (ctx.trail) ctx.trail.length = 0;
+  await store(ctx, { op: 'put', k: 'trail', v: [] });
+  for (const i of [...new Set(ids)]) await gone(ctx, i);
+}
 // История видна: при нажатии кнопки старый текст сообщения не стирается, ответ дописывается снизу («👉 …»)
 const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const edit = (ctx, mid, text, rows) => {
@@ -300,7 +313,7 @@ const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) :
 // эмодзи владельца после записи (владелец 26.11): расход — 💸; доход — 🪙
 const DONE_EMO = { 'Расход': '5319172285762919855', 'Доход': '5449418135381759397' };
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
-const dirMenu = ctx => send(ctx, PAD(3) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(5) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['💳 Баланс', 'adj']], [['📄 Открыть таблицу', SHEET_URL]]]);
+const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(3) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(5) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['💳 Баланс', 'adj']], [['📄 Открыть таблицу', SHEET_URL]]]); };
 
 // ---------- Запись в таблицу ----------
 async function save(ctx, cfg, d) {
@@ -366,16 +379,17 @@ async function setItem(ctx, x, sum, status) { await gas(ctx, [{ op: 'set', sheet
 async function onTool(ctx, q) {
   const cfg = await config(ctx);
   const [k, id] = q.data.split(':'); const mid = q.message.message_id;
+  if (k !== 'adj') ctx.noTrack = true;                  // залоги/брони — результаты остаются
   await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
   if (k === 'zl') {
     const items = await openItems(ctx);
-    await edit(ctx, mid, '📋 Залоги и брони');
+    await gone(ctx, mid);
     if (!items.length) return send(ctx, 'Открытых залогов и броней нет.');
     for (const x of items) await send(ctx, itemText(x), itemButtons(x));
     return;
   }
   if (k === 'adj') {
-    await edit(ctx, mid, '<tg-emoji emoji-id="5472250091332993630">💳</tg-emoji> Баланс');
+    await gone(ctx, mid);
     await putSt(ctx, {});                                   // «Баланс» только показывает остатки (владелец 26.11); исправление — не здесь
     const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
     const rows = g.values.filter(r => r[0] && r[2]);
@@ -390,7 +404,7 @@ async function onTool(ctx, q) {
   }
   if (k === 'aj') {
     const c = cfg.cards[+id];
-    await edit(ctx, mid, '💳 ' + c.name);
+    await gone(ctx, mid);
     await putSt(ctx, { tool: { kind: 'adj', card: c.name, cur: c.cur }, await: 'tool' });
     return send(ctx, `Сколько сейчас на самом деле на «${c.name}»? Напишите число${c.cur === '$' ? ' в долларах' : ''}.`, withBack());
   }
@@ -502,6 +516,7 @@ async function morning(env) {
 // 20% фонд, 20% возврат вложений Наилю (пока не вернулись), из остального — расходы Leadex с прошлого поступления, остаток 50/50.
 // Карты получателей пока не заданы (владелец 26.11: «сделай пока виртуальную кнопку»).
 async function leadexSplit(ctx, cfg, id, amount) {
+  ctx.noTrack = true;
   const last = (await store(ctx, { op: 'get', k: 'lxLast' })) || 0;
   const [j, debt] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: 'A2:M3000' }, { op: 'get', sheet: 'Долги и накопления', range: 'F6' }]);
   const exp = j.values.filter(r => r[3] === 'Leadex' && r[4] === 'Расход' && r[12] !== 'удалено' && r[1] && r[1].d > last).reduce((a, r) => a + (Number(r[7]) || 0), 0);
@@ -526,6 +541,7 @@ async function leadexSplit(ctx, cfg, id, amount) {
   return send(ctx, L.join('\n'), kb);
 }
 async function onLeadex(ctx, q) {
+  ctx.noTrack = true;
   const cfg = await config(ctx); const [k, id] = q.data.split(':'); const mid = q.message.message_id;
   await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
   if (k === 'lxif') {
@@ -571,6 +587,7 @@ async function closeSupplier(ctx, cfg) {
   return send(ctx, `🧾 Закрыли оплату поставщику. Сколько <b>осталось</b> на «${sup.name}»? Напишите число из приложения банка.`, withBack());
 }
 async function supplierDone(ctx, cfg, card, left) {
+  ctx.noTrack = true;
   const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
   const r = g.values.find(r => String(r[0]) === card); const before = Number(r && r[8]) || 0;
   const paid = Math.round(before - left);
@@ -600,6 +617,7 @@ async function supplierDone(ctx, cfg, card, left) {
 
 // ---------- Аренда: доля брата 60% после каждой сделки ----------
 async function rentShare(ctx, cfg) {
+  ctx.noTrack = true;
   const J = await journal(ctx);
   const ars = cardByWord(cfg, 'Арс');
   const inc = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Доход').reduce((a, x) => a + x.uzs, 0);
@@ -621,6 +639,7 @@ async function rentShare(ctx, cfg) {
 }
 // кнопки: перевёл в резерв / брату → с какой карты
 async function onShares(ctx, q) {
+  ctx.noTrack = true;
   const cfg = await config(ctx); const [k, id] = q.data.split(':'); const mid = q.message.message_id;
   await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
   if (k === 'rsvl' || k === 'brol') return edit(ctx, mid, 'Хорошо, позже. Кнопка остаётся.', [[['✅ Перевёл', k === 'rsvl' ? 'rsv:' + id : 'bro:']]]);
@@ -757,14 +776,14 @@ async function onCallback(ctx, q) {
   if (k === 'pt') {                                  // PS SHOP: ➕ доход / ➖ расход
     const type = v === '+' ? 'Доход' : 'Расход';
     await putSt(ctx, { dir: st.dir || 'PS SHOP', ptype: type });
-    await edit(ctx, mid, `<b>PS SHOP ${v === '+' ? '➕ доход' : '➖ расход'}</b>`);
+    await gone(ctx, mid);
     return send(ctx, v === '+' ? 'Пишите доход. Например: «игра 450 000 на Приёмку».' : 'Пишите расход. Например: «OLX 50 000 с Расходки».', [[BACK]]);
   }
   if (k === 'd') {                                   // направление
     const dir = DIRS[+v];
-    if (st.d && !st.d.dir) { remember(st); st.d.dir = dir; refill(cfg, st.d); await edit(ctx, mid, '🏢 ' + dir); return askNext(ctx, cfg, st); }
-    if (st.d && st.editDir) { st.d.dir = dir; st.d.group = st.d.cat = null; st.editDir = false; await edit(ctx, mid, '🏢 ' + dir); return st.d.type === 'Между своими' ? reshow(ctx, st) : askGroup(ctx, cfg, st); }
-    await edit(ctx, mid, '🏢 ' + dir);
+    if (st.d && !st.d.dir) { remember(st); st.d.dir = dir; refill(cfg, st.d); await gone(ctx, mid); return askNext(ctx, cfg, st); }
+    if (st.d && st.editDir) { st.d.dir = dir; st.d.group = st.d.cat = null; st.editDir = false; await gone(ctx, mid); return st.d.type === 'Между своими' ? reshow(ctx, st) : askGroup(ctx, cfg, st); }
+    await gone(ctx, mid);
     if (st.pending) return startDraft(ctx, cfg, dir, st.pending);
     await putSt(ctx, { dir });
     const extra = dir === 'PS SHOP' ? [[['Закрыл оплату поставщику ✅', 'sup']]] : dir === 'Аренда PS5' ? [[['📋 Залоги и брони', 'zl']]] : [];
@@ -772,9 +791,9 @@ async function onCallback(ctx, q) {
     if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [extra[0], [['+', 'pt:+'], ['−', 'pt:-']], ...extra.slice(1)]);
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
-  if (k === 'bk' && st.tool) { await edit(ctx, mid, '<tg-emoji emoji-id="5215261582170278752">⬅️</tg-emoji>'); await putSt(ctx, {}); return dirMenu(ctx); }
+  if (k === 'bk' && st.tool) { await gone(ctx, mid); await putSt(ctx, {}); return dirMenu(ctx); }
   if (k === 'bk') {
-    await edit(ctx, mid, '<tg-emoji emoji-id="5215261582170278752">⬅️</tg-emoji>');
+    await gone(ctx, mid);
     if (st.editDir) { st.editDir = false; return reshow(ctx, st); }
     if (st.hist && st.hist.length) { st.d = JSON.parse(st.hist.pop()); st.await = null; return complete(st.d) ? reshow(ctx, st) : askNext(ctx, cfg, st); }
     await putSt(ctx, {}); return dirMenu(ctx);
@@ -782,34 +801,36 @@ async function onCallback(ctx, q) {
   if (!st.d) return edit(ctx, mid, 'Эта запись уже закрыта. Нажмите /menu, чтобы начать новую.');
   if (['ty', 'g', 's', 'k', 'dt'].includes(k)) remember(st);
   const d = st.d;
-  if (k === 'ty') { d.type = TYPES[+v]; d.group = d.cat = null; await edit(ctx, mid, '🔄 ' + d.type); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
+  if (k === 'ty') { d.type = TYPES[+v]; d.group = d.cat = null; await gone(ctx, mid); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
   if (k === 'g') {
     const g = st.groups[+v]; const subs = cfg.cats.filter(c => c.dir === d.dir && c.kind === d.type && c.group === g);
-    if (subs.length === 1) { d.group = g; d.cat = subs[0].cat; await edit(ctx, mid, '🏷 ' + g); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
+    if (subs.length === 1) { d.group = g; d.cat = subs[0].cat; await gone(ctx, mid); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
     d.group = g; await putSt(ctx, st);
     return edit(ctx, mid, `🏷 ${g}: что именно?`, withBack(chunk(subs.map((c, i) => [c.cat, 's:' + i]), 2)));
   }
   if (k === 's') {
     const subs = cfg.cats.filter(c => c.dir === d.dir && c.kind === d.type && c.group === d.group);
-    d.cat = subs[+v].cat; await edit(ctx, mid, `🏷 ${d.group} / ${d.cat}`); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st);
+    d.cat = subs[+v].cat; await gone(ctx, mid); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st);
   }
-  if (k === 'k') { const c = cfg.cards[+v]; d[st.side] = c.name; await edit(ctx, mid, '💳 ' + c.name); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
-  if (k === 'bd') { d.book = shiftYmd(todayYmd(), Number(v)); await edit(ctx, mid, '🗓 ' + human(d.book)); return reshow(ctx, st); }
-  if (k === 'dt') { d.date = v === '0' ? todayYmd() : shiftYmd(todayYmd(), -Number(v)); await edit(ctx, mid, '📅 ' + human(d.date)); return reshow(ctx, st); }
-  if (k === 'no') { await edit(ctx, mid, '❌ Отменено, эту запись не записал.'); return nextOrMenu(ctx, cfg, st); }
+  if (k === 'k') { const c = cfg.cards[+v]; d[st.side] = c.name; await gone(ctx, mid); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
+  if (k === 'bd') { d.book = shiftYmd(todayYmd(), Number(v)); await gone(ctx, mid); return reshow(ctx, st); }
+  if (k === 'dt') { d.date = v === '0' ? todayYmd() : shiftYmd(todayYmd(), -Number(v)); await gone(ctx, mid); return reshow(ctx, st); }
+  if (k === 'no') { await gone(ctx, mid); return nextOrMenu(ctx, cfg, st); }
   if (k === 'ok') {
     if (!complete(d)) return askNext(ctx, cfg, st);
     await edit(ctx, mid, summary(d) + '\n\n⏳ Записываю…');
     try {
       const id = await save(ctx, cfg, d);
       await edit(ctx, mid, `✅ Записано · ${id}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
+      ctx.keep = [mid]; ctx.noTrack = true;            // запись и расчёты после неё остаются в чате
+      { const t = (await store(ctx, { op: 'get', k: 'trail' })) || []; await store(ctx, { op: 'put', k: 'trail', v: t.filter(i => i !== mid) }); ctx.trail = ctx.trail.filter(i => i !== mid); }
       if (!d.edit && d.dir === 'Аренда PS5' && (d.type === 'Доход' || d.type === 'Расход')) await rentShare(ctx, cfg);
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
         const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
         await leadexSplit(ctx, cfg, id, uzs);
       }
       if (!d.edit && DONE_EMO[d.type]) await send(ctx, `<tg-emoji emoji-id="${DONE_EMO[d.type]}">💸</tg-emoji>`);   // один раз в конце записи
-      return nextOrMenu(ctx, cfg, st);
+      ctx.noTrack = false; return nextOrMenu(ctx, cfg, st);
     } catch (e) { return edit(ctx, mid, summary(d) + '\n\n⚠️ Не получилось записать: ' + e.message, [[['✅ Ещё раз', 'ok'], ['❌ Отменить', 'no']]]); }
   }
   if (k === 'ed') {
@@ -871,15 +892,18 @@ async function handle(ctx, upd) {
     return;
   }
   if (q && q.message) { ctx.orig = q.message.text || ''; ctx.origMid = q.message.message_id; }
+  ctx.trail = m ? [m.message_id] : [];
   try {
     if (q && /^lx(ok|no|in|if):/.test(q.data)) return await onLeadex(ctx, q);
     if (q && /^(rsv|rsvl|bro|brol|rsvf|brof):/.test(q.data)) return await onShares(ctx, q);
-    if (q && q.data === 'sup') { await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id }); await edit(ctx, q.message.message_id, '🧾 Закрыл оплату'); return await closeSupplier(ctx, await config(ctx)); }
+    if (q && q.data === 'sup') { await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id }); await gone(ctx, q.message.message_id); return await closeSupplier(ctx, await config(ctx)); }
     if (q && /^(zl|adj|aj|zr|zry|zp|zk|pc|pb|p0|pk)(:|$)/.test(q.data)) return await onTool(ctx, q);
     if (q) return /^(rm|rmy|rmn|fx):/.test(q.data) ? await onSavedButton(ctx, q) : await onCallback(ctx, q);
     return await onMessage(ctx, m);
   } catch (e) {
-    await send(ctx, '⚠️ Ошибка: ' + e.message + '\nПопробуйте ещё раз или нажмите /menu.');
+    ctx.noTrack = true; await send(ctx, '⚠️ Ошибка: ' + e.message + '\nПопробуйте ещё раз или нажмите /menu.');
+  } finally {
+    if (ctx.trail && ctx.trail.length) { const t = (await store(ctx, { op: 'get', k: 'trail' })) || []; await store(ctx, { op: 'put', k: 'trail', v: [...t, ...ctx.trail].slice(-200) }); }
   }
 }
 
