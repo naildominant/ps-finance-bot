@@ -21,7 +21,7 @@ async function tg(ctx, method, body) {
 const ICON = { '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
   'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['Leadex', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
 // цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
-const STYLE = { 'Закрыл оплату поставщику ✅': 'success', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger' };
+const STYLE = { 'Закрыл оплату поставщику ✅': 'success', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
 const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data]) => {
   const b = ICON[text] ? { text: ICON[text][0], icon_custom_emoji_id: ICON[text][1] } : { text };
   if (STYLE[text]) b.style = STYLE[text];
