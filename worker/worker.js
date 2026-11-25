@@ -21,7 +21,7 @@ async function tg(ctx, method, body) {
 const ICON = { 'Закрыл оплату поставщику ✅': ['Закрыл оплату поставщику', '5465154027970908359'], '+': [' ', '5253652327734192243'], '−': [' ', '5255775038010829248'], '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
   'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['Leadex', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
 // цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
-const STYLE = { 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
+const STYLE = { 'Предоплата': 'success', 'Залог': 'primary', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
 const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data]) => {
   const b = ICON[text] ? { text: ICON[text][0], icon_custom_emoji_id: ICON[text][1] } : { text };
   if (STYLE[text]) b.style = STYLE[text];
@@ -776,11 +776,14 @@ async function onCallback(ctx, q) {
   const mid = q.message.message_id;
   let st = await getSt(ctx);
   await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
-  if (k === 'pt') {                                  // PS SHOP: ➕ доход / ➖ расход
-    const type = v === '+' ? 'Доход' : 'Расход';
-    await putSt(ctx, { dir: st.dir || 'PS SHOP', ptype: type });
+  if (k === 'pt') {                                  // готовый тип записи: PS SHOP ➕/➖, Аренда — предоплата/залог
+    const T = { '+': 'Доход', '-': 'Расход', pre: 'Предоплата', zal: 'Залог' }[v];
+    const dir = st.dir || (v === 'pre' || v === 'zal' ? 'Аренда PS5' : 'PS SHOP');
+    await putSt(ctx, { dir, ptype: T });
     await gone(ctx, mid);
-    return send(ctx, v === '+' ? 'Пишите доход. Например: «игра 450 000 на Приёмку».' : 'Пишите расход. Например: «OLX 50 000 с Расходки».', [[BACK]]);
+    const hint = { '+': 'Пишите доход. Например: «игра 450 000 на Приёмку».', '-': 'Пишите расход. Например: «OLX 50 000 с Расходки».',
+      pre: 'Пишите предоплату: сумму, карту и дату брони. Например: «50 000 на Капитал, бронь 28.11».', zal: 'Пишите залог: сумму и карту. Например: «залог 300 000 на Капитал».' }[v];
+    return send(ctx, hint, [[BACK]]);
   }
   if (k === 'd') {                                   // направление
     const dir = DIRS[+v];
@@ -789,9 +792,10 @@ async function onCallback(ctx, q) {
     await gone(ctx, mid);
     if (st.pending) return startDraft(ctx, cfg, dir, st.pending);
     await putSt(ctx, { dir });
-    const extra = dir === 'PS SHOP' ? [[['Закрыл оплату поставщику ✅', 'sup']]] : dir === 'Аренда PS5' ? [[['📋 Залоги и брони', 'zl']]] : [];
+    const extra = dir === 'PS SHOP' ? [[['Закрыл оплату поставщику ✅', 'sup']]] : [];
     extra.push([BACK]);                                   // назад в главное меню
     if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [extra[0], [['+', 'pt:+'], ['−', 'pt:-']], ...extra.slice(1)]);
+    if (dir === 'Аренда PS5') return send(ctx, '<b>АРЕНДА ?</b>', [[['Предоплата', 'pt:pre'], ['Залог', 'pt:zal']], [BACK]]);
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
   if (k === 'bk' && st.tool) { await gone(ctx, mid); await putSt(ctx, {}); return dirMenu(ctx); }

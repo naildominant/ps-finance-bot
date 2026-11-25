@@ -68,3 +68,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - Pressed button with premium icon → bot sends that emoji (from bot; sending as user impossible). Tracked (cleaned at menu).
 - Категории: + Личное/Расход/Самокат (owner 26.11), no limit.
 - PS SHOP income: category NOT asked (owner 26.11); default «Продажа» (Категории row added) or detected group. Filtering by category — later stage.
+- Аренда screen (owner 26.11): «АРЕНДА ?» bold; [Предоплата (green)] [Залог (blue)]; Back. Preset type via pt:pre / pt:zal. «Залоги и брони» list button removed from this screen (asked owner where to put it).
