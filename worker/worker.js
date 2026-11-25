@@ -32,12 +32,13 @@ async function config(ctx, force) {
   if (!force) { const c = await ctx.env.KV.get('cfg', 'json'); if (c && Date.now() - c.at < 600000) return c; }
   const [cats, cards, sets] = await gas(ctx, [
     { op: 'get', sheet: 'Категории', range: 'A2:D300' },
-    { op: 'get', sheet: 'Карты', range: 'A2:C20' },
+    { op: 'get', sheet: 'Карты', range: 'A2:L20' },
     { op: 'get', sheet: 'Настройки', range: 'A2:B40' }]);
   const c = {
     at: Date.now(),
     cats: cats.values.filter(r => r[0]).map(r => ({ dir: r[0], kind: r[1], group: r[2], cat: r[3] })),
-    cards: cards.values.filter(r => r[0] && r[2]).map(r => ({ name: String(r[0]), cur: r[2] })),
+    cards: cards.values.filter(r => r[0] && r[2]).map(r => ({ name: String(r[0]), cur: r[2],
+      inc: String(r[10] || '').split(',').map(x => x.trim()).filter(Boolean), exp: String(r[11] || '').split(',').map(x => x.trim()).filter(Boolean) })),
     owners: sets.values.filter(r => /Telegram ID: Наиль/.test(r[0])).map(r => String(r[1])).filter(Boolean),
   };
   await ctx.env.KV.put('cfg', JSON.stringify(c));
@@ -181,7 +182,9 @@ async function askGroup(ctx, cfg, st) {
 }
 async function askCard(ctx, cfg, st, side, q) {
   st.await = null; st.side = side; await putSt(ctx, st);
-  await send(ctx, q, withBack(chunk(cfg.cards.map((c, i) => [c.name, 'k:' + i]), 2)));
+  const d = st.d, list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) =>
+    d.type === 'Доход' ? c.inc.includes(d.dir) : d.type === 'Расход' ? c.exp.includes(d.dir) : true);
+  await send(ctx, q, withBack(chunk((list.length ? list : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [c.name, 'k:' + i]), 2)));
 }
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
 const dirMenu = ctx => send(ctx, 'Выберите направление записи:', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']]]);
