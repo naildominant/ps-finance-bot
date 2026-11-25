@@ -373,8 +373,17 @@ async function onTool(ctx, q) {
   }
   if (k === 'adj') {
     await edit(ctx, mid, '<tg-emoji emoji-id="5472250091332993630">💳</tg-emoji> Баланс');
-    await putSt(ctx, { tool: { kind: 'adj' } });
-    return send(ctx, 'Какую карту сверить?', withBack(chunk(cfg.cards.map((c, i) => [c.name, 'aj:' + i]), 2)));
+    await putSt(ctx, {});                                   // «Баланс» только показывает остатки (владелец 26.11); исправление — не здесь
+    const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
+    const rows = g.values.filter(r => r[0] && r[2]);
+    let tot = 0, alien = 0; const L = ['<b>💳 Баланс по картам</b>', ''];
+    for (const r of rows) {
+      const v = Number(r[8]) || 0, j = Number(r[9]) || 0, usd = r[2] === '$', bro = /^Арс/.test(r[0]);
+      L.push(`${r[0]}: <b>${usd ? '$' + fmt(v) : fmt(v)}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}${bro ? ' — деньги брата' : ''}`);
+      if (!usd && !bro) { tot += v; alien += j; }
+    }
+    L.push('', `Всего в сумах: <b>${fmt(tot)}</b>`); if (alien) L.push(`Из них мои: <b>${fmt(tot - alien)}</b>`);
+    return send(ctx, L.join('\n'), [[BACK]]);
   }
   if (k === 'aj') {
     const c = cfg.cards[+id];
@@ -563,7 +572,7 @@ async function supplierDone(ctx, cfg, card, left) {
   const r = g.values.find(r => String(r[0]) === card); const before = Number(r && r[8]) || 0;
   const paid = Math.round(before - left);
   await putSt(ctx, {});
-  if (paid <= 0) return send(ctx, `По записям на «${card}» было ${fmt(before)}, вы пишете ${fmt(left)}. Оплаты не видно. Если остаток по записям неверный, поправьте его кнопкой «💳 Баланс» в главном меню.`);
+  if (paid <= 0) return send(ctx, `По записям на «${card}» было ${fmt(before)}, вы пишете ${fmt(left)}. Оплаты не видно.`);
   const sid = await botRec(ctx, cfg, { dir: 'PS SHOP', type: 'Расход', group: 'Поставщик', cat: 'Поставщик', amount: paid, from: card, comment: `Оплата поставщику: было ${fmt(before)}, осталось ${fmt(left)}` });
   const last = (await store(ctx, { op: 'get', k: 'psLast' })) || 0;
   const J = (await journal(ctx)).filter(x => x.t > last || x.id === sid);
