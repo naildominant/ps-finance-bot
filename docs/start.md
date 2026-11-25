@@ -65,3 +65,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - Done emoji (owner 26.11): after a record is saved, ONE premium emoji, then menu: Расход → 5319172285762919855 (DONE_EMO map); Доход → 5449418135381759397. Not on every action. Supplier button icon = owner checkmark 5465154027970908359. Menu centered with U+2800 pads on both sides (PAD).
 - Direction (owner 26.11): if section not chosen, single record takes AI direction from words (was: always asked by button). Asks only if AI unsure.
 - Clean chat (owner 26.11): pressed question messages deleted (gone); all bot sends + owner messages tracked in ctx.trail → DO 'trail'; dirMenu() purges trail before sending menu. Kept (noTrack/keep): saved «✅ Записано», done emoji, Leadex/rent/supplier/reserve results, залоги items, errors.
+- Pressed button with premium icon → bot sends that emoji (from bot; sending as user impossible). Tracked (cleaned at menu).

@@ -893,6 +893,10 @@ async function handle(ctx, upd) {
   }
   if (q && q.message) { ctx.orig = q.message.text || ''; ctx.origMid = q.message.message_id; }
   ctx.trail = m ? [m.message_id] : [];
+  if (q && q.message && q.message.reply_markup) {        // нажата кнопка с премиум-эмодзи → бот присылает этот эмодзи (владелец 26.11)
+    const b = q.message.reply_markup.inline_keyboard.flat().find(b => b.callback_data === q.data);
+    if (b && b.icon_custom_emoji_id) await send(ctx, `<tg-emoji emoji-id="${b.icon_custom_emoji_id}">⭐</tg-emoji>`);
+  }
   try {
     if (q && /^lx(ok|no|in|if):/.test(q.data)) return await onLeadex(ctx, q);
     if (q && /^(rsv|rsvl|bro|brol|rsvf|brof):/.test(q.data)) return await onShares(ctx, q);
