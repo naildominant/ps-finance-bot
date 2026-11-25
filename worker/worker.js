@@ -21,7 +21,7 @@ async function tg(ctx, method, body) {
 const ICON = { 'Закрыл оплату поставщику ✅': ['Закрыл оплату поставщику', '5465154027970908359'], '+': [' ', '5253652327734192243'], '−': [' ', '5255775038010829248'], '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
   'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['Leadex', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
 // цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
-const STYLE = { 'Сегодня': 'primary', 'Завтра': 'primary', 'Послезавтра': 'primary', 'Другая дата': 'primary', 'Предоплата': 'success', 'Залог': 'primary', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
+const STYLE = { 'Поступление': 'success', 'Сегодня': 'primary', 'Завтра': 'primary', 'Послезавтра': 'primary', 'Другая дата': 'primary', 'Предоплата': 'success', 'Залог': 'primary', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
 const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data, style]) => {
   const b = ICON[text] ? { text: ICON[text][0], icon_custom_emoji_id: ICON[text][1] } : { text };
   if (style || STYLE[text]) b.style = style || STYLE[text];
@@ -334,7 +334,7 @@ async function save(ctx, cfg, d) {
   const hhmm = d.time || nowT().toISOString().slice(11, 16);
   const when = Date.parse(d.date + 'T' + hhmm + ':00Z') - TZ_MS;
   const from = isIn(d.type) ? '' : d.from || '', to = isOut(d.type) ? '' : d.to || '';
-  const row = (id) => [id, { d: when }, 'Наиль', d.dir, d.type, d.group || '', d.cat || '', uzs, usdAmt, rate, from, to, 'ок', d.src || 'текст', d.comment || '', ''];
+  const row = (id) => [id, { d: when }, 'Наиль', d.dir, d.type, d.group || '', d.cat || '', uzs, usdAmt, rate, from, to, 'ок', d.src || 'текст', d.comment || '', d.ord && d.ord !== 'new' ? d.ord : ''];
   if (d.edit) {
     const [f] = await gas(ctx, [{ op: 'find', sheet: 'Журнал', col: 'A', value: d.edit }]);
     if (!f.row) throw new Error('не нашёл запись ' + d.edit);
@@ -349,7 +349,7 @@ async function save(ctx, cfg, d) {
   const id = 'R' + n;
   const ops = [{ op: 'append', sheet: 'Журнал', row: row(id) }];
   if (d.type === 'Предоплата' || d.type === 'Залог')
-    ops.push({ op: 'append', sheet: 'Залоги и предоплаты', row: [id, { d: when }, d.type, d.dir, uzs, to, d.book ? { d: Date.parse(d.book) } : '', 'открыт', d.comment || ''] });
+    ops.push({ op: 'append', sheet: 'Залоги и предоплаты', row: [id, { d: when }, d.type, d.dir, uzs, to, d.book ? { d: Date.parse(d.book) } : '', 'открыт', d.comment || '', d.ord && d.ord !== 'new' ? d.ord : ''] });
   await gas(ctx, ops);
   return id;
 }
@@ -417,7 +417,7 @@ async function onTool(ctx, q) {
   if (k === 'zry') {
     const rid = await botRec(ctx, cfg, { dir: x.dir, type: 'Возврат залога', amount: x.sum, from: x.card, comment: 'Возврат залога ' + x.id });
     await setItem(ctx, x, 0, 'закрыт');
-    return edit(ctx, mid, `↩️ Залог ${x.id} вернули клиенту: ${fmt(x.sum)} сум с «${x.card}» (${rid}). Это не расход.`);
+    return edit(ctx, mid, `↩️ Залог ${x.id} вернули клиенту: ${fmt(x.sum)} сум с «${x.card}» (${rid}). Это не расход.` + await closeOrdIfDone(ctx, x.id));
   }
   if (k === 'zp' || k === 'zk') {
     await putSt(ctx, { tool: { kind: k, id }, await: 'tool' });
@@ -426,7 +426,8 @@ async function onTool(ctx, q) {
   if (k === 'pb') {
     const rid = await botRec(ctx, cfg, { dir: x.dir, type: 'Доход', group: x.dir === 'Аренда PS5' ? 'Аренда' : '', cat: 'Сгоревшая предоплата', amount: x.sum, comment: 'Сгорела предоплата ' + x.id });
     await setItem(ctx, x, 0, 'сгорела');
-    await edit(ctx, mid, `🔥 Предоплата ${x.id} сгорела: ${fmt(x.sum)} сум теперь доход (${rid}).`);
+    { const m = await getOrds(ctx); const o = ordOf(m, x.id); if (o) { o.paid = true; await putOrds(ctx, m); } }
+    await edit(ctx, mid, `🔥 Предоплата ${x.id} сгорела: ${fmt(x.sum)} сум теперь доход (${rid}).` + await closeOrdIfDone(ctx, x.id));
     return x.dir === 'Аренда PS5' ? rentShare(ctx, cfg) : null;
   }
   if (k === 'pc') {
@@ -510,7 +511,8 @@ async function morning(env) {
   for (const x of await openItems(ctx)) {
     if (x.type !== 'Предоплата' || !x.book || !x.book.d) continue;
     if (ymdT(new Date(x.book.d + TZ_MS)) > today) continue;
-    await send(ctx, 'Клиент приехал?\n' + itemText(x), itemButtons(x));
+    const o = ordOf(await getOrds(ctx), x.id);
+    await send(ctx, 'Клиент приехал?\n' + itemText(x) + (o ? `\nЗаказ ${o.id}` : ''), o ? [[['✅ Приехал — записать оплату', `ao:in|${o.id}`], ['🔥 Сгорела', 'pb:' + x.id]]] : itemButtons(x));
   }
 }
 
@@ -790,6 +792,82 @@ async function calendar(ctx, ym) {
   rows.push([['◀️', 'cl:' + sh(-1)], ['▶️', 'cl:' + sh(1)]], [BACK]);
   return rows;
 }
+
+// ---------- Аренда: заказы (владелец 26.11, вариант 1) ----------
+// Заказ A1, A2… объединяет предоплату, оплату, залог и продления одного клиента. Хранится в DO 'ords'.
+// { id, book, prepay:[id записей], zalog:[id], paid, closed, at }. Номер заказа пишется в Журнал!P и «Залоги»!J.
+async function getOrds(ctx) {
+  let m = await store(ctx, { op: 'get', k: 'ords' });
+  if (!m) {                                               // первый запуск: открытые залоги/предоплаты → отдельные заказы
+    m = { _n: 0 };
+    for (const x of await openItems(ctx)) {
+      if (x.dir !== 'Аренда PS5') continue;
+      const id = 'A' + (++m._n);
+      m[id] = { id, book: x.book && x.book.d ? ymdT(new Date(x.book.d + TZ_MS)) : '', prepay: x.type === 'Предоплата' ? [x.id] : [], zalog: x.type === 'Залог' ? [x.id] : [], paid: x.type === 'Залог', closed: false, at: Date.now() };
+    }
+    await store(ctx, { op: 'put', k: 'ords', v: m });
+  }
+  return m;
+}
+const putOrds = (ctx, m) => store(ctx, { op: 'put', k: 'ords', v: m });
+const ordList = m => Object.keys(m).filter(k => k !== '_n' && !m[k].closed).map(k => m[k]);
+const ordOf = (m, itemId) => ordList(m).find(o => o.prepay.includes(itemId) || o.zalog.includes(itemId));
+function ordInfo(o, items) {
+  const pre = items.filter(x => o.prepay.includes(x.id)), zal = items.filter(x => o.zalog.includes(x.id));
+  const sp = pre.reduce((a, x) => a + x.sum, 0), sz = zal.reduce((a, x) => a + x.sum, 0);
+  return { pre, zal, sp, sz, label: [o.id, o.book ? 'бронь ' + o.book.slice(8, 10) + '.' + o.book.slice(5, 7) : '', sp ? 'предоплата ' + fmt(sp) : '', o.paid ? 'идёт' : '', sz ? 'залог ' + fmt(sz) : ''].filter(Boolean).join(' · ') };
+}
+function rentDraft(cfg, type, f) {                        // черновик аренды кнопками (текст пустой — чтобы цифры из «A1» не стали суммой)
+  const d = draftFrom(cfg, 'Аренда PS5', { type, amount: f.amount || null }, '', true);
+  Object.assign(d, f); d.src = 'кнопка'; d.n = 1; d.of = 1; return d;
+}
+// после сохранения записи с заказом: связать, при оплате — перевести предоплату в доход и спросить про залог
+async function afterOrder(ctx, cfg, d, id) {
+  const m = await getOrds(ctx); const o = m[d.ord]; if (!o) return false;
+  if (d.type === 'Предоплата') { o.prepay.push(id); if (d.book) o.book = d.book; }
+  if (d.type === 'Залог') o.zalog.push(id);
+  let ask = false;
+  if (d.type === 'Доход' && !o.paid) {
+    o.paid = true; ask = !o.zalog.length;                // залог уже есть — не спрашиваем
+    const items = await openItems(ctx);
+    for (const x of items.filter(x => o.prepay.includes(x.id))) {
+      const rid = await botRec(ctx, cfg, { dir: 'Аренда PS5', type: 'Доход', group: 'Аренда', cat: 'Предоплата', amount: x.sum, ord: o.id, comment: `Предоплата ${x.id} заказа ${o.id} — клиент приехал` });
+      await setItem(ctx, x, 0, 'подтверждено');
+      await send(ctx, `✅ Предоплата ${fmt(x.sum)} по заказу ${o.id} теперь доход (${rid}).`);
+    }
+  }
+  await putOrds(ctx, m);
+  if (ask) { await send(ctx, `🔐 <b>Залог по заказу ${o.id} взяли?</b>`, [[['Нет', `zg:${o.id}|0`]], [['100 000', `zg:${o.id}|100000`], ['200 000', `zg:${o.id}|200000`], ['300 000', `zg:${o.id}|300000`]], [['Другая сумма', `zg:${o.id}|x`]]]); }
+  return ask;
+}
+async function closeOrdIfDone(ctx, itemId) {               // заказ закрывается, когда нет открытых предоплат/залогов и он оплачен
+  const m = await getOrds(ctx); const o = ordOf(m, itemId); if (!o) return '';
+  const open = (await openItems(ctx)).filter(x => o.prepay.includes(x.id) || o.zalog.includes(x.id));
+  if (open.length || !o.paid) return '';
+  o.closed = true; await putOrds(ctx, m); return `\n🏁 Заказ ${o.id} закрыт.`;
+}
+async function rentPick(ctx, kind) {                        // список открытых заказов кнопками
+  const m = await getOrds(ctx), items = await openItems(ctx);
+  const os = ordList(m).filter(o => kind === 'zl' || kind === 'in' ? true : true);
+  const rows = os.map(o => [[ordInfo(o, items).label, `ao:${kind}|${o.id}`]]);
+  const title = kind === 'in' ? '💵 <b>Поступление: какой заказ?</b>' : '🔐 <b>Залог: какой заказ?</b>';
+  rows.push([[kind === 'in' ? '🆕 Без предоплаты' : '🆕 Новый заказ', `ao:${kind}|new`]], [BACK]);
+  return send(ctx, title + (os.length ? '' : '\nОткрытых заказов нет.'), rows);
+}
+async function rentOrders(ctx) {                            // «📋 Заказы»: открытые заказы и что с ними сделать
+  const m = await getOrds(ctx), items = await openItems(ctx), os = ordList(m);
+  if (!os.length) return send(ctx, 'Открытых заказов нет.', [[BACK]]);
+  ctx.noTrack = true;
+  for (const o of os) {
+    const i = ordInfo(o, items), rows = [];
+    for (const x of i.zal) rows.push([['↩️ Вернул залог', 'zr:' + x.id], ['✋ Удержал часть', 'zk:' + x.id]]);
+    if (!o.paid) for (const x of i.pre) rows.push([['🔥 Бронь сгорела', 'pb:' + x.id]]);
+    rows.push([['🏁 Закрыть заказ', 'ac:' + o.id]]);
+    await send(ctx, '📋 ' + i.label, rows);
+  }
+  ctx.noTrack = false;
+  return send(ctx, '⬆️ Открытые заказы', [[BACK]]);
+}
 async function onCallback(ctx, q) {
   const cfg = await config(ctx);
   const [k, v] = q.data.split(':');
@@ -806,10 +884,33 @@ async function onCallback(ctx, q) {
     if (v === 'pre') return send(ctx, '<b>Сколько предоплата?</b>', [[['50 000', 'pa:50000'], ['100 000', 'pa:100000']], [['150 000', 'pa:150000'], ['200 000', 'pa:200000']], [BACK]]);
     return send(ctx, hint, [[BACK]]);
   }
+  if (k === 'ar') {                                  // экран аренды: поступление / залог / заказы
+    await gone(ctx, mid); await putSt(ctx, { dir: 'Аренда PS5' });
+    return v === 'list' ? rentOrders(ctx) : rentPick(ctx, v);
+  }
+  if (k === 'ao') {                                  // выбран заказ (или новый)
+    const [kind, oid] = v.split('|'); await gone(ctx, mid);
+    const m = await getOrds(ctx), o = m[oid];
+    if (kind === 'zl') return askNext(ctx, cfg, { d: rentDraft(cfg, 'Залог', { ord: oid, comment: 'Залог ' + (o ? o.id : 'нового заказа') }), queue: [] });
+    if (o && o.paid) {                                // заказ уже идёт → продление
+      const z = (await openItems(ctx)).filter(x => o.zalog.includes(x.id));
+      return send(ctx, `➕ <b>Продление ${o.id}: откуда деньги?</b>`, [[['💵 Новые деньги', `ap:${oid}`]], ...z.map(x => [[`🔐 Из залога (${fmt(x.sum)})`, 'zp:' + x.id]]), [BACK]]);
+    }
+    return askNext(ctx, cfg, { d: rentDraft(cfg, 'Доход', { ord: oid, group: 'Аренда', cat: 'Оплата аренды', comment: 'Оплата аренды ' + (o ? o.id : 'без предоплаты') }), queue: [] });
+  }
+  if (k === 'ap') { await gone(ctx, mid); return askNext(ctx, cfg, { d: rentDraft(cfg, 'Доход', { ord: v, group: 'Аренда', cat: 'Продление', comment: 'Продление ' + v }), queue: [] }); }
+  if (k === 'zg') {                                  // залог после оплаты
+    const [oid, a] = v.split('|'); await gone(ctx, mid);
+    if (a === '0') return nextOrMenu(ctx, cfg, {});
+    return askNext(ctx, cfg, { d: rentDraft(cfg, 'Залог', { ord: oid, amount: a === 'x' ? null : Number(a), comment: 'Залог ' + oid }), queue: [] });
+  }
+  if (k === 'ac') {
+    const m = await getOrds(ctx); if (m[v]) { m[v].closed = true; await putOrds(ctx, m); }
+    await gone(ctx, mid); return send(ctx, `🏁 Заказ ${v} закрыт.`);
+  }
   if (k === 'pa') {                                  // предоплата аренды кнопкой суммы → дальше карта и дата брони кнопками
     await gone(ctx, mid);
-    const d = draftFrom(cfg, 'Аренда PS5', { type: 'Предоплата', amount: Number(v) }, 'Предоплата ' + fmt(Number(v)), true);
-    d.src = 'кнопка'; d.n = 1; d.of = 1;
+    const d = rentDraft(cfg, 'Предоплата', { amount: Number(v), ord: 'new', comment: 'Предоплата ' + fmt(Number(v)) });
     return askNext(ctx, cfg, { d, queue: [] });
   }
   if (k === 'd') {                                   // направление
@@ -822,7 +923,7 @@ async function onCallback(ctx, q) {
     const extra = dir === 'PS SHOP' ? [[['Закрыл оплату поставщику ✅', 'sup']]] : [];
     extra.push([BACK]);                                   // назад в главное меню
     if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [extra[0], [['+', 'pt:+'], ['−', 'pt:-']], ...extra.slice(1)]);
-    if (dir === 'Аренда PS5') return send(ctx, '<b>АРЕНДА ?</b>', [[['Предоплата', 'pt:pre'], ['Залог', 'pt:zal']], [BACK]]);
+    if (dir === 'Аренда PS5') return send(ctx, '<b>АРЕНДА ?</b>', [[['Поступление', 'ar:in']], [['Предоплата', 'pt:pre'], ['Залог', 'ar:zl']], [['📋 Заказы', 'ar:list']], [BACK]]);
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
   if (k === 'bk' && st.tool) { await gone(ctx, mid); await putSt(ctx, {}); return dirMenu(ctx); }
@@ -859,11 +960,18 @@ async function onCallback(ctx, q) {
     if (!complete(d)) return askNext(ctx, cfg, st);
     await edit(ctx, mid, summary(d) + '\n\n⏳ Записываю…');
     try {
+      if (!d.edit && d.dir === 'Аренда PS5' && (d.type === 'Предоплата' || d.type === 'Залог') && !d.ord) d.ord = 'new';
+      if (!d.edit && d.ord === 'new') {                   // новый заказ аренды
+        const m = await getOrds(ctx); const oid = 'A' + (++m._n);
+        m[oid] = { id: oid, book: '', prepay: [], zalog: [], paid: false, closed: false, at: Date.now() }; await putOrds(ctx, m); d.ord = oid;
+      }
       const id = await save(ctx, cfg, d);
-      await edit(ctx, mid, `✅ Записано · ${id}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
+      await edit(ctx, mid, `✅ Записано · ${id}${d.ord && !d.edit ? ' · заказ ' + d.ord : ''}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
       ctx.keep = [mid]; ctx.noTrack = true;            // запись и расчёты после неё остаются в чате
       { const t = (await store(ctx, { op: 'get', k: 'trail' })) || []; await store(ctx, { op: 'put', k: 'trail', v: t.filter(i => i !== mid) }); ctx.trail = ctx.trail.filter(i => i !== mid); }
+      const waitZ = !d.edit && d.ord ? await afterOrder(ctx, cfg, d, id) : false;
       if (!d.edit && d.dir === 'Аренда PS5' && (d.type === 'Доход' || d.type === 'Расход')) await rentShare(ctx, cfg);
+      if (waitZ) { if (DONE_EMO[d.type]) await send(ctx, `<tg-emoji emoji-id="${DONE_EMO[d.type]}">💸</tg-emoji>`); ctx.noTrack = false; await putSt(ctx, {}); return; }   // ждём ответ про залог
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
         const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
         await leadexSplit(ctx, cfg, id, uzs);
