@@ -38,3 +38,10 @@ Bot must match by short name, bank or last digits. Main sheet has 3 charts (mont
 - Web app deployed (Execute as me, Anyone). URL + key stored only as worker secrets GAS_URL, GAS_KEY. Test read OK via worker.
 - Worker psfinance bindings: BOT_TOKEN, GAS_KEY, GAS_URL, KV (namespace «psfinance»), WH_SECRET. Webhook /tg set (secret header). Currently only logs senders to KV seen:<id> (for collecting Telegram IDs); /seen?k=GAS_KEY lists them.
 - Owner on iPhone: Apps Script editor works only when opened from Claude app link; paste into EMPTY editor.
+
+## Stage 2 (26.11): text dialog live
+- worker/worker.js + worker/deploy.sh (keep_bindings; DO «State» migration v1 already applied — never resend).
+- Dialog state + record counter (R1, R2…) in Durable Object ST (KV was stale up to 60s). KV only: cfg cache (10 min, /reload?k= forces), CBU rates, seen:<id>.
+- Parse: Workers AI llama-3.3-70b → JSON; card prefilled if said, else buttons. Types now: Доход / Расход / Между своими (Предоплата/Вложение/Залог — stage 4–5).
+- Delete = status «удалено» in Журнал col M; edit after save overwrites the row. CBU rate for today written to Настройки!B2 once a day on first save.
+- Dry-run endpoint POST /test?k=GAS_KEY (no Telegram, no sheet writes); script in scratchpad t.py (UA must not be python-urllib — Cloudflare 403).
