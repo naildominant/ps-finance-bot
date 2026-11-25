@@ -508,13 +508,6 @@ async function leadexSplit(ctx, cfg, id, amount) {
 async function onLeadex(ctx, q) {
   const cfg = await config(ctx); const [k, id] = q.data.split(':'); const mid = q.message.message_id;
   await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
-  const x = await store(ctx, { op: 'get', k: 'lx:' + id });
-  if (!x) return edit(ctx, mid, 'Расчёт не найден.');
-  if (k === 'lxin') {                                     // вложение недостающей суммы: с какой карты
-    if (!x.short) return edit(ctx, mid, 'Вложение уже записано.');
-    const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.cur === 'сум');
-    return send(ctx, `С какой карты вложили ${fmt(x.short)} в Leadex?`, [...chunk(list.map(({ c, i }) => [c.name, `lxif:${id}|${i}`]), 2), [['Без перевода, только записать', `lxif:${id}|-`]]]);
-  }
   if (k === 'lxif') {
     const [iid, ci] = id.split('|'); const y = await store(ctx, { op: 'get', k: 'lx:' + iid });
     if (!y || !y.short) return edit(ctx, mid, 'Вложение уже записано.');
@@ -524,6 +517,13 @@ async function onLeadex(ctx, q) {
       comment: 'Покрытие расходов Leadex сверх 60% (' + iid + ')' });
     const amt = y.short; y.short = 0; await store(ctx, { op: 'put', k: 'lx:' + iid, v: y });
     return edit(ctx, mid, `✅ Записал вложение ${fmt(amt)}${src ? `: «${src.name}»${lx ? ' → «' + lx.name + '»' : ''}` : ''} (${rid}). Оно добавлено к сумме, которую Leadex возвращает вам.`);
+  }
+  const x = await store(ctx, { op: 'get', k: 'lx:' + id });
+  if (!x) return edit(ctx, mid, 'Расчёт не найден.');
+  if (k === 'lxin') {                                     // вложение недостающей суммы: с какой карты
+    if (!x.short) return edit(ctx, mid, 'Вложение уже записано.');
+    const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.cur === 'сум');
+    return send(ctx, `С какой карты вложили ${fmt(x.short)} в Leadex?`, [...chunk(list.map(({ c, i }) => [c.name, `lxif:${id}|${i}`]), 2), [['Без перевода, только записать', `lxif:${id}|-`]]]);
   }
   if (k === 'lxno') return edit(ctx, mid, 'Хорошо, напомню позже. Кнопка «✅ Перевёл» остаётся выше.', [[['✅ Перевёл', 'lxok:' + id]], ...(x.short ? [[['💰 Вложил ' + fmt(x.short), 'lxin:' + id]]] : [])]);
   if (x.done) return edit(ctx, mid, 'Уже отмечено.');
