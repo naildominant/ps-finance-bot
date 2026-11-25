@@ -17,9 +17,11 @@ async function tg(ctx, method, body) {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   return r.json();
 }
-const ICON = { '↩️ Назад': '5215261582170278752' };      // премиум-эмодзи владельца: кнопка «Назад» = только красная стрелка
-const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data]) => (/^https?:/.test(data) ? { text, url: data }
-  : ICON[text] ? { text: ' ', icon_custom_emoji_id: ICON[text], callback_data: data } : { text, callback_data: data }))) });
+// премиум-эмодзи владельца на кнопках: подпись → [текст, id эмодзи] («Назад» — только красная стрелка)
+const ICON = { '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'] };
+const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data]) => {
+  const b = ICON[text] ? { text: ICON[text][0], icon_custom_emoji_id: ICON[text][1] } : { text };
+  return /^https?:/.test(data) ? { ...b, url: data } : { ...b, callback_data: data }; })) });
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU/edit';
 const send = (ctx, text, rows) => tg(ctx, 'sendMessage', { chat_id: ctx.chat, text, parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
 // История видна: при нажатии кнопки старый текст сообщения не стирается, ответ дописывается снизу («👉 …»)
@@ -291,7 +293,7 @@ async function askCard(ctx, cfg, st, side, q) {
   await send(ctx, q, withBack(chunk((list.length ? list : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [c.name, 'k:' + i]), 2)));
 }
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
-const dirMenu = ctx => send(ctx, '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['🧮 Остаток карты', 'adj']], [['📊 Открыть таблицу', SHEET_URL]]]);
+const dirMenu = ctx => send(ctx, '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['💳 Баланс', 'adj']], [['📄 Открыть таблицу', SHEET_URL]]]);
 
 // ---------- Запись в таблицу ----------
 async function save(ctx, cfg, d) {
@@ -366,7 +368,7 @@ async function onTool(ctx, q) {
     return;
   }
   if (k === 'adj') {
-    await edit(ctx, mid, '🧮 Остаток карты');
+    await edit(ctx, mid, '<tg-emoji emoji-id="5472250091332993630">💳</tg-emoji> Баланс');
     await putSt(ctx, { tool: { kind: 'adj' } });
     return send(ctx, 'Какую карту сверить?', withBack(chunk(cfg.cards.map((c, i) => [c.name, 'aj:' + i]), 2)));
   }
@@ -557,7 +559,7 @@ async function supplierDone(ctx, cfg, card, left) {
   const r = g.values.find(r => String(r[0]) === card); const before = Number(r && r[8]) || 0;
   const paid = Math.round(before - left);
   await putSt(ctx, {});
-  if (paid <= 0) return send(ctx, `По записям на «${card}» было ${fmt(before)}, вы пишете ${fmt(left)}. Оплаты не видно. Если остаток по записям неверный, поправьте его кнопкой «🧮 Остаток карты».`);
+  if (paid <= 0) return send(ctx, `По записям на «${card}» было ${fmt(before)}, вы пишете ${fmt(left)}. Оплаты не видно. Если остаток по записям неверный, поправьте его кнопкой «💳 Баланс» в главном меню.`);
   const sid = await botRec(ctx, cfg, { dir: 'PS SHOP', type: 'Расход', group: 'Поставщик', cat: 'Поставщик', amount: paid, from: card, comment: `Оплата поставщику: было ${fmt(before)}, осталось ${fmt(left)}` });
   const last = (await store(ctx, { op: 'get', k: 'psLast' })) || 0;
   const J = (await journal(ctx)).filter(x => x.t > last || x.id === sid);
