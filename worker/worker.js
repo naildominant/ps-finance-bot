@@ -17,7 +17,9 @@ async function tg(ctx, method, body) {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   return r.json();
 }
-const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data]) => (/^https?:/.test(data) ? { text, url: data } : { text, callback_data: data }))) });
+const ICON = { '↩️ Назад': '5215261582170278752' };      // премиум-эмодзи владельца: кнопка «Назад» = только красная стрелка
+const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data]) => (/^https?:/.test(data) ? { text, url: data }
+  : ICON[text] ? { text: ' ', icon_custom_emoji_id: ICON[text], callback_data: data } : { text, callback_data: data }))) });
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU/edit';
 const send = (ctx, text, rows) => tg(ctx, 'sendMessage', { chat_id: ctx.chat, text, parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
 // История видна: при нажатии кнопки старый текст сообщения не стирается, ответ дописывается снизу («👉 …»)
@@ -629,7 +631,8 @@ async function onMessage(ctx, m) {
   const text = (m.text || '').trim();
   let st = await getSt(ctx);
   const ce = (m.entities || []).filter(e => e.type === 'custom_emoji');   // id премиум-эмодзи владельца (для меню)
-  if (ce.length && !ctx.dry) await ctx.env.KV.put('ce', JSON.stringify({ text, ids: ce.map(e => [e.offset, e.length, e.custom_emoji_id]) }));
+  if (ce.length && !ctx.dry) for (const e of ce) await ctx.env.KV.put('ce:' + e.custom_emoji_id, JSON.stringify({ text, at: Date.now() }));
+  if (ce.length && !text.replace(/[\s\u{FE0F}\u{200D}\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{2B05}-\u{2B07}\u{2190}-\u{21FF}]/gu, '')) return send(ctx, 'Эмодзи запомнил 👌');
   if (text === '/start' || text === '/menu' || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
   if (m.voice || m.audio || m.video_note) {
     const f = m.voice || m.audio || m.video_note;
@@ -741,9 +744,9 @@ async function onCallback(ctx, q) {
     const extra = dir === 'PS SHOP' ? [[['🧾 Закрыл оплату поставщику', 'sup']]] : dir === 'Аренда PS5' ? [[['📋 Залоги и брони', 'zl']]] : undefined;
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
-  if (k === 'bk' && st.tool) { await edit(ctx, mid, '↩️ Назад'); await putSt(ctx, {}); return dirMenu(ctx); }
+  if (k === 'bk' && st.tool) { await edit(ctx, mid, '<tg-emoji emoji-id="5215261582170278752">⬅️</tg-emoji>'); await putSt(ctx, {}); return dirMenu(ctx); }
   if (k === 'bk') {
-    await edit(ctx, mid, '↩️ Назад');
+    await edit(ctx, mid, '<tg-emoji emoji-id="5215261582170278752">⬅️</tg-emoji>');
     if (st.editDir) { st.editDir = false; return reshow(ctx, st); }
     if (st.hist && st.hist.length) { st.d = JSON.parse(st.hist.pop()); st.await = null; return complete(st.d) ? reshow(ctx, st) : askNext(ctx, cfg, st); }
     await putSt(ctx, {}); return dirMenu(ctx);
@@ -873,6 +876,14 @@ export default {
     if (u.pathname === '/seen') {
       const l = await env.KV.list({ prefix: 'seen:' }); const out = [];
       for (const k of l.keys) out.push(JSON.parse(await env.KV.get(k.name)));
+      return Response.json(out);
+    }
+    if (u.pathname === '/tgcall' && req.method === 'POST') {  // служебное: прямой вызов Telegram (проверка эмодзи и т. п.)
+      const b = await req.json(); return Response.json(await tg({ env }, b.method, b.body));
+    }
+    if (u.pathname === '/ce') {
+      const l = await env.KV.list({ prefix: 'ce:' }); const out = {};
+      for (const k of l.keys) out[k.name.slice(3)] = JSON.parse(await env.KV.get(k.name));
       return Response.json(out);
     }
     if (u.pathname === '/test' && req.method === 'POST') {   // прогон без отправки в Telegram и без записи в таблицу
