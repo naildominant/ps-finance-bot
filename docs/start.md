@@ -32,3 +32,9 @@ Total UZS (excl. Ars): 20 905 944.41; foreign (залог) 150 000
 ## Card names (owner 25.11) — sheet Карты col A, journal uses exactly these
 Приёмка (NBU 4408) · Поставщик (VISA 0233) · Расходка (NBU 6440) · Ипак 9783 · UZUM вклад (reserve deposit) · Узум (UZUM 9028) · Капитал (Kapitalbank 2660) · Булка (UZUM Bulka) · Нал · Доллары.
 Bot must match by short name, bank or last digits. Main sheet has 3 charts (month by direction, balances, personal by group); helper data Главная!H4:J21.
+
+## Apps Script + worker (26.11 night)
+- Apps Script is a STANDALONE project in account nail.gaynullin.official (owner's 2nd account); sheet shared to it as editor. setup() ran: daily backup 3:00 Tashkent to that account's Drive folder «PS Финансы — копии» (keeps 60).
+- Web app deployed (Execute as me, Anyone). URL + key stored only as worker secrets GAS_URL, GAS_KEY. Test read OK via worker.
+- Worker psfinance bindings: BOT_TOKEN, GAS_KEY, GAS_URL, KV (namespace «psfinance»), WH_SECRET. Webhook /tg set (secret header). Currently only logs senders to KV seen:<id> (for collecting Telegram IDs); /seen?k=GAS_KEY lists them.
+- Owner on iPhone: Apps Script editor works only when opened from Claude app link; paste into EMPTY editor.
