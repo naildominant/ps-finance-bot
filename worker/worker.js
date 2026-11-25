@@ -376,13 +376,13 @@ async function onTool(ctx, q) {
     await putSt(ctx, {});                                   // «Баланс» только показывает остатки (владелец 26.11); исправление — не здесь
     const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
     const rows = g.values.filter(r => r[0] && r[2]);
-    let tot = 0, alien = 0; const L = ['<b>💳 Баланс по картам</b>', ''];
+    let tot = 0, alien = 0, n = 0; const L = ['<b>💳 Баланс по картам</b>', ''];
     for (const r of rows) {
       const v = Number(r[8]) || 0, j = Number(r[9]) || 0, usd = r[2] === '$', bro = /^Арс/.test(r[0]);
-      L.push(`${r[0]}: <b>${usd ? '$' + fmt(v) : fmt(v)}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}${bro ? ' — деньги брата' : ''}`);
+      L.push(`${++n}. ${r[0]}\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}${bro ? ' — деньги брата' : ''}`, '');
       if (!usd && !bro) { tot += v; alien += j; }
     }
-    L.push('', `Всего в сумах: <b>${fmt(tot)}</b>`); if (alien) L.push(`Из них мои: <b>${fmt(tot - alien)}</b>`);
+    L.push('━━━━━━━━━━', `Всего в сумах: <b>${fmt(tot)}</b>`); if (alien) L.push(`Из них мои: <b>${fmt(tot - alien)}</b>`);
     return send(ctx, L.join('\n'), [[BACK]]);
   }
   if (k === 'aj') {
