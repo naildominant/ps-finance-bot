@@ -3,6 +3,7 @@
 
 const DIRS = ['PS SHOP', 'Аренда PS5', 'Leadex', 'Личное'];
 const TYPES = ['Доход', 'Расход', 'Между своими'];
+const TLABEL = t => (t === 'Между своими' ? 'Между' : t);   // короткая подпись на кнопке
 const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const DAY = 86400000, TZ_MS = 5 * 3600000;
 
@@ -168,7 +169,7 @@ function summary(d) {
 async function askNext(ctx, cfg, st) {
   const d = st.d;
   if (!d.type) { st.await = null; await putSt(ctx, st);
-    return void await send(ctx, 'Это доход, расход или перевод между своими картами?', withBack([TYPES.map((t, i) => [t, 'ty:' + i])])); }
+    return void await send(ctx, 'Это доход, расход или перевод между своими картами?', withBack([TYPES.map((t, i) => [TLABEL(t), 'ty:' + i])])); }
   if (d.amount == null) { st.await = 'amount'; await putSt(ctx, st);
     return void await send(ctx, '💰 Какая сумма? Напишите число, например <code>150000</code> или <code>$50</code>.', withBack()); }
   if (d.type !== 'Между своими' && !d.cat) return void await askGroup(ctx, cfg, st);
@@ -333,7 +334,7 @@ async function onCallback(ctx, q) {
     if (v === 'c') return askGroup(ctx, cfg, st);
     if (v === 'n') { st.editDir = true; await putSt(ctx, st); return send(ctx, 'Новое направление:', withBack([[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']]])); }
     if (v === 'd') { st.await = 'date'; await putSt(ctx, st); return send(ctx, '📅 Дата? Нажмите кнопку или напишите, например, <code>24.11</code>.', withBack([[['Сегодня', 'dt:0'], ['Вчера', 'dt:1'], ['Позавчера', 'dt:2']]])); }
-    if (v === 't') return send(ctx, 'Тип записи:', withBack([TYPES.map((t, i) => [t, 'ty:' + i])]));
+    if (v === 't') return send(ctx, 'Тип записи:', withBack([TYPES.map((t, i) => [TLABEL(t), 'ty:' + i])]));
     if (v === 'k') { const side = d.type === 'Доход' ? 'to' : 'from';
       if (d.type === 'Между своими') { d.from = d.to = null; return askNext(ctx, cfg, st); }
       return askCard(ctx, cfg, st, side, '💳 Какая карта?'); }
