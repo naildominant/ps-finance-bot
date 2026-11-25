@@ -498,21 +498,39 @@ async function leadexSplit(ctx, cfg, id, amount) {
     `Расходы Leadex с прошлого поступления: ${fmt(exp)}`, '',
     `• Фонд Leadex 20%: <b>${fmt(fund)}</b> → карта фонда (не выбрана)`,
     ret ? `• Возврат вложений вам: <b>${fmt(ret)}</b> (останется вернуть ${fmt(invLeft - ret)})` : '• Вложения уже возвращены',
-    over ? `⚠️ Расходы (${fmt(exp)}) больше, чем осталось на них (${fmt(pool)}). Правило на этот случай ещё не решено — доли не начисляю.`
+    over ? `⚠️ Расходы (${fmt(exp)}) больше, чем осталось на них (${fmt(pool)}). Долей в этот раз нет.\n💰 <b>Нужно вложить: ${fmt(exp - pool)}</b> — запишу как вложение, оно вернётся вам из следующих поступлений (20%).`
          : `• Расходы покрыты: ${fmt(exp)}\n• Вам 50%: <b>${fmt(half)}</b>\n• Ришату 50%: <b>${fmt(rest - half)}</b> → карта Ришата (не выбрана)`];
-  return send(ctx, L.join('\n'), [[['✅ Перевёл', 'lxok:' + id], ['Позже', 'lxno:' + id]]]);
+  x.short = over ? exp - pool : 0; await store(ctx, { op: 'put', k: 'lx:' + id, v: x });
+  const kb = [[['✅ Перевёл', 'lxok:' + id], ['Позже', 'lxno:' + id]]];
+  if (over) kb.push([['💰 Вложил ' + fmt(x.short), 'lxin:' + id]]);
+  return send(ctx, L.join('\n'), kb);
 }
 async function onLeadex(ctx, q) {
   const cfg = await config(ctx); const [k, id] = q.data.split(':'); const mid = q.message.message_id;
   await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
   const x = await store(ctx, { op: 'get', k: 'lx:' + id });
   if (!x) return edit(ctx, mid, 'Расчёт не найден.');
-  if (k === 'lxno') return edit(ctx, mid, 'Хорошо, напомню позже. Кнопка «✅ Перевёл» остаётся выше.', [[['✅ Перевёл', 'lxok:' + id]]]);
+  if (k === 'lxin') {                                     // вложение недостающей суммы: с какой карты
+    if (!x.short) return edit(ctx, mid, 'Вложение уже записано.');
+    const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.cur === 'сум');
+    return send(ctx, `С какой карты вложили ${fmt(x.short)} в Leadex?`, [...chunk(list.map(({ c, i }) => [c.name, `lxif:${id}|${i}`]), 2), [['Без перевода, только записать', `lxif:${id}|-`]]]);
+  }
+  if (k === 'lxif') {
+    const [iid, ci] = id.split('|'); const y = await store(ctx, { op: 'get', k: 'lx:' + iid });
+    if (!y || !y.short) return edit(ctx, mid, 'Вложение уже записано.');
+    const src = ci === '-' ? null : cfg.cards[+ci];
+    const lx = cfg.cards.find(c => c.inc.includes('Leadex') && c.name !== (src && src.name) && c.cur === 'сум');
+    const rid = await botRec(ctx, cfg, { dir: 'Leadex', type: 'Вложение', cat: 'Вложение', amount: y.short, from: src ? src.name : '', to: src && lx ? lx.name : '',
+      comment: 'Покрытие расходов Leadex сверх 60% (' + iid + ')' });
+    const amt = y.short; y.short = 0; await store(ctx, { op: 'put', k: 'lx:' + iid, v: y });
+    return edit(ctx, mid, `✅ Записал вложение ${fmt(amt)}${src ? `: «${src.name}»${lx ? ' → «' + lx.name + '»' : ''}` : ''} (${rid}). Оно добавлено к сумме, которую Leadex возвращает вам.`);
+  }
+  if (k === 'lxno') return edit(ctx, mid, 'Хорошо, напомню позже. Кнопка «✅ Перевёл» остаётся выше.', [[['✅ Перевёл', 'lxok:' + id]], ...(x.short ? [[['💰 Вложил ' + fmt(x.short), 'lxin:' + id]]] : [])]);
   if (x.done) return edit(ctx, mid, 'Уже отмечено.');
   const recs = [];
   if (x.ret) recs.push(await botRec(ctx, cfg, { dir: 'Leadex', type: 'Возврат вложений', cat: 'Возврат вложений Leadex', amount: x.ret, comment: 'Возврат вложений из ' + id }));
   if (x.nail) recs.push(await botRec(ctx, cfg, { dir: 'Личное', type: 'Доход', group: 'Доля из Leadex (50%)', cat: 'Доля из Leadex (50%)', amount: x.nail, comment: 'Доля из ' + id }));
-  await gas(ctx, [{ op: 'append', sheet: 'Доли', row: [{ d: Date.now() }, id, x.amount, x.over ? 0 : x.exp, x.fund, x.ret, x.nail, x.rishat, x.over ? 'расходы > 60%, доли не начислены' : 'отмечено'] }]);
+  await gas(ctx, [{ op: 'append', sheet: 'Доли', row: [{ d: Date.now() }, id, x.amount, x.over ? 0 : x.exp, x.fund, x.ret, x.nail, x.rishat, x.over ? 'расходы > 60%, доли не начислены, нехватка → вложение' : 'отмечено'] }]);
   x.done = true; await store(ctx, { op: 'put', k: 'lx:' + id, v: x });
   if (!ctx.dry) await store(ctx, { op: 'put', k: 'lxLast', v: Date.now() });
   return edit(ctx, mid, `✅ Отмечено. ${recs.length ? 'Записал: ' + recs.join(', ') + '. ' : ''}Таблица «Доли» обновлена.`);
@@ -816,7 +834,7 @@ async function handle(ctx, upd) {
   }
   if (q && q.message) { ctx.orig = q.message.text || ''; ctx.origMid = q.message.message_id; }
   try {
-    if (q && /^lx(ok|no):/.test(q.data)) return await onLeadex(ctx, q);
+    if (q && /^lx(ok|no|in|if):/.test(q.data)) return await onLeadex(ctx, q);
     if (q && /^(rsv|rsvl|bro|brol|rsvf|brof):/.test(q.data)) return await onShares(ctx, q);
     if (q && q.data === 'sup') { await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id }); await edit(ctx, q.message.message_id, '🧾 Закрыл оплату'); return await closeSupplier(ctx, await config(ctx)); }
     if (q && /^(zl|adj|aj|zr|zry|zp|zk|pc|pb|p0|pk)(:|$)/.test(q.data)) return await onTool(ctx, q);
