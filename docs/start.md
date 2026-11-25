@@ -69,3 +69,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - Категории: + Личное/Расход/Самокат (owner 26.11), no limit.
 - PS SHOP income: category NOT asked (owner 26.11); default «Продажа» (Категории row added) or detected group. Filtering by category — later stage.
 - Аренда screen (owner 26.11): «АРЕНДА ?» bold; [Предоплата (green)] [Залог (blue)]; Back. Preset type via pt:pre / pt:zal. «Залоги и брони» list button removed from this screen (asked owner where to put it).
+- Предоплата аренды (owner 26.11): pt:pre → amount buttons 50/100/150/200 тыс (pa:N) → card → booking date buttons → summary. Typing still works.
