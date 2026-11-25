@@ -868,6 +868,8 @@ async function handle(ctx, upd) {
     return;
   }
   if (q && q.message) { ctx.orig = q.message.text || ''; ctx.origMid = q.message.message_id; }
+  // «бот думает»: премиум-эмодзи владельца, пока идёт обработка; потом удаляется (владелец 26.11)
+  const think = ctx.dry ? null : await send(ctx, '<tg-emoji emoji-id="5319172285762919855">💸</tg-emoji>').catch(() => null);
   try {
     if (q && /^lx(ok|no|in|if):/.test(q.data)) return await onLeadex(ctx, q);
     if (q && /^(rsv|rsvl|bro|brol|rsvf|brof):/.test(q.data)) return await onShares(ctx, q);
@@ -877,6 +879,8 @@ async function handle(ctx, upd) {
     return await onMessage(ctx, m);
   } catch (e) {
     await send(ctx, '⚠️ Ошибка: ' + e.message + '\nПопробуйте ещё раз или нажмите /menu.');
+  } finally {
+    if (think && think.ok) await tg(ctx, 'deleteMessage', { chat_id: ctx.chat, message_id: think.result.message_id }).catch(() => {});
   }
 }
 
