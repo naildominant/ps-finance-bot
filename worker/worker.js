@@ -297,8 +297,8 @@ async function askCard(ctx, cfg, st, side, q) {
   await send(ctx, q, withBack(chunk((list.length ? list : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [c.name, 'k:' + i]), 2)));
 }
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
-// эмодзи владельца после записи (владелец 26.11): расход — 💸; доход — ждём эмодзи
-const DONE_EMO = { 'Расход': '5319172285762919855' };
+// эмодзи владельца после записи (владелец 26.11): расход — 💸; доход — 🪙
+const DONE_EMO = { 'Расход': '5319172285762919855', 'Доход': '5449418135381759397' };
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
 const dirMenu = ctx => send(ctx, PAD(3) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(5) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['💳 Баланс', 'adj']], [['📄 Открыть таблицу', SHEET_URL]]]);
 
