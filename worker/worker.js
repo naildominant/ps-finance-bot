@@ -391,6 +391,15 @@ async function onToolText(ctx, cfg, st, text) {
   const a = parseAmount(text);
   if (!a) return send(ctx, 'Не понял число. Напишите, например, <code>150000</code>.');
   const t = st.tool;
+  if (t.kind === 'interest') {          // 1-е число: проценты по UZUM вкладу → доход PS SHOP
+    const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+    const r = g.values.find(r => String(r[0]) === t.card); const now = Number(r && r[8]) || 0;
+    const diff = Math.round(a.amount - now);
+    await putSt(ctx, {});
+    if (diff <= 0) { st.tool = { kind: 'adj', card: t.card, cur: 'сум' }; return diff === 0 ? send(ctx, '✅ Совпадает, процентов не прибавилось.') : onToolText(ctx, cfg, st, text); }
+    const rid = await botRec(ctx, cfg, { dir: 'PS SHOP', type: 'Доход', group: 'Проценты по вкладу', cat: 'Проценты по вкладу', amount: diff, to: t.card, comment: 'Проценты по вкладу за месяц' });
+    return send(ctx, `💰 Проценты по «${t.card}»: +${fmt(diff)} сум — доход PS SHOP (${rid}). На вкладе теперь ${fmt(a.amount)}.`, [[['🗑 Отменить', 'rm:' + rid]]]);
+  }
   if (t.kind === 'adj') {
     const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
     const r = g.values.find(r => String(r[0]) === t.card); const now = Number(r && r[8]) || 0;
@@ -427,6 +436,11 @@ async function morning(env) {
   const ctx = { env, out: [] }; const cfg = await config(ctx, true);
   ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
   const today = todayYmd();
+  if (today.endsWith('-01')) {
+    const dep = cfg.cards.find(c => /вклад/i.test(c.name));
+    if (dep) { await putSt(ctx, { tool: { kind: 'interest', card: dep.name }, await: 'tool' });
+      await send(ctx, `📅 Начало месяца. Сколько сейчас на «${dep.name}»? Напишите сумму из приложения — разницу запишу как проценты (доход PS SHOP).`); }
+  }
   for (const x of await openItems(ctx)) {
     if (x.type !== 'Предоплата' || !x.book || !x.book.d) continue;
     if (ymdT(new Date(x.book.d + TZ_MS)) > today) continue;
