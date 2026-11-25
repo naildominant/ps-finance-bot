@@ -225,6 +225,7 @@ function matchCard(cfg, s) {
 const stKey = ctx => (ctx.dry ? 'dry:' : '') + 'st:' + ctx.chat;
 // Состояние диалога — в Durable Object (сразу видно в следующем запросе, в отличие от KV)
 async function store(ctx, body) {
+  if (ctx.dry && body.k && !String(body.k).startsWith('dry:')) body = { ...body, k: 'dry:' + body.k };   // тест не трогает настоящие данные
   const stub = ctx.env.ST.get(ctx.env.ST.idFromName('main'));
   const r = await stub.fetch('https://st/', { method: 'POST', body: JSON.stringify(body) });
   return r.json();
