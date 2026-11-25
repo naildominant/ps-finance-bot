@@ -748,7 +748,8 @@ async function onCallback(ctx, q) {
     await edit(ctx, mid, '🏢 ' + dir);
     if (st.pending) return startDraft(ctx, cfg, dir, st.pending);
     await putSt(ctx, { dir });
-    const extra = dir === 'PS SHOP' ? [[['Закрыл оплату поставщику ✅', 'sup']]] : dir === 'Аренда PS5' ? [[['📋 Залоги и брони', 'zl']]] : undefined;
+    const extra = dir === 'PS SHOP' ? [[['Закрыл оплату поставщику ✅', 'sup']]] : dir === 'Аренда PS5' ? [[['📋 Залоги и брони', 'zl']]] : [];
+    extra.push([BACK]);                                   // назад в главное меню
     const E = id => `<tg-emoji emoji-id="${id}">🅰️</tg-emoji>`;      // плюс / минус — премиум-эмодзи владельца
     if (dir === 'PS SHOP') return send(ctx, `<b>PS SHOP ${E('5442846010785151030')} или ${E('5442918359509251481')} ?</b>`, extra);
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
