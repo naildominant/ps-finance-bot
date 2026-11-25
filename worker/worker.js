@@ -15,7 +15,12 @@ async function tg(ctx, method, body) {
 }
 const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data]) => ({ text, callback_data: data }))) });
 const send = (ctx, text, rows) => tg(ctx, 'sendMessage', { chat_id: ctx.chat, text, parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
-const edit = (ctx, mid, text, rows) => tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: mid, text, parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
+// История видна: при нажатии кнопки старый текст сообщения не стирается, ответ дописывается снизу («👉 …»)
+const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const edit = (ctx, mid, text, rows) => {
+  if (ctx.orig && mid === ctx.origMid) text = esc(ctx.orig) + '\n\n👉 ' + text;
+  return tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: mid, text, parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
+};
 
 // ---------- Google Таблица (через Apps Script) ----------
 async function gas(ctx, ops) {
@@ -284,7 +289,7 @@ async function onCallback(ctx, q) {
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`);
   }
   if (k === 'bk') {
-    await tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } });
+    await edit(ctx, mid, '↩️ Назад');
     if (st.editDir) { st.editDir = false; return reshow(ctx, st); }
     if (st.hist && st.hist.length) { st.d = JSON.parse(st.hist.pop()); st.await = null; return complete(st.d) ? reshow(ctx, st) : askNext(ctx, cfg, st); }
     await putSt(ctx, {}); return dirMenu(ctx);
@@ -371,6 +376,7 @@ async function handle(ctx, upd) {
     await ctx.env.KV.put('seen:' + from.id, JSON.stringify({ id: from.id, name: [from.first_name, from.last_name].filter(Boolean).join(' '), user: from.username || '', at: Date.now() }));
     return;
   }
+  if (q && q.message) { ctx.orig = q.message.text || ''; ctx.origMid = q.message.message_id; }
   try {
     if (q) return /^(rm|rmy|rmn|fx):/.test(q.data) ? await onSavedButton(ctx, q) : await onCallback(ctx, q);
     return await onMessage(ctx, m);
