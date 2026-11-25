@@ -18,7 +18,7 @@ async function tg(ctx, method, body) {
   return r.json();
 }
 // премиум-эмодзи владельца на кнопках: подпись → [текст, id эмодзи] («Назад» — только красная стрелка)
-const ICON = { '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
+const ICON = { '+': [' ', '5442846010785151030'], '−': [' ', '5442918359509251481'], '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
   'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['Leadex', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
 // цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
 const STYLE = { 'Закрыл оплату поставщику ✅': 'success', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
@@ -656,7 +656,7 @@ async function onMessage(ctx, m) {
     if (!said) return send(ctx, '🎤 Не расслышал. Попробуйте ещё раз или напишите текстом.');
     await send(ctx, '🎤 ' + esc(said));
     if (st.await && st.d) return onMessage(ctx, { ...m, voice: null, audio: null, video_note: null, text: said });
-    return startDraft(ctx, cfg, st.dir || null, said, 'голос');
+    ctx.ptype = st.ptype; return startDraft(ctx, cfg, st.dir || null, said, 'голос');
   }
   const img = m.photo ? m.photo[m.photo.length - 1] : (m.document && /^image\//.test(m.document.mime_type || '') ? m.document : null);
   if (img) {
@@ -665,7 +665,7 @@ async function onMessage(ctx, m) {
     if (!seen) return send(ctx, '📷 Не смог прочитать. Пришлите фото чётче или напишите текстом.');
     const full = (m.caption ? m.caption + '. ' : '') + seen;
     await send(ctx, '📷 На фото: ' + esc(seen));
-    return startDraft(ctx, cfg, st.dir || null, full, 'фото');
+    ctx.ptype = st.ptype; return startDraft(ctx, cfg, st.dir || null, full, 'фото');
   }
   if (m.document) return send(ctx, 'Этот файл я не читаю. Пришлите фото, голосовое или текст.');
   if (!text) return;
@@ -687,7 +687,7 @@ async function onMessage(ctx, m) {
     if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>24.11</code> или «вчера».');
     remember(st); st.d.date = y; return reshow(ctx, st);
   }
-  return startDraft(ctx, cfg, st.dir || null, text);   // без выбранного направления: одна запись — спросим кнопкой, несколько — направление по смыслу
+  ctx.ptype = st.ptype; return startDraft(ctx, cfg, st.dir || null, text);   // без выбранного направления: одна запись — спросим кнопкой, несколько — направление по смыслу
 }
 const complete = d => d.dir && d.type && d.amount != null && (d.type === 'Между своими' ? d.from && d.to
   : (!needsCat(d.type) || d.cat) && (isOut(d.type) ? d.from : d.to) && (d.type !== 'Предоплата' || d.book));
@@ -731,6 +731,7 @@ async function startDraft(ctx, cfg, dir, text, src) {
   try { recs = await aiParse(ctx, cfg, dir, text); } catch (e) { recs = []; }
   if (!recs.length) recs = [{}];
   const single = recs.length === 1;
+  if (ctx.ptype && single) recs[0].type = ctx.ptype;      // выбран ➕/➖ — тип не спрашиваем
   const drafts = recs.map(p => draftFrom(cfg, dir, p, text, single));
   if (src) drafts.forEach(d => { d.src = src; });
   if (!single) await send(ctx, `Нашёл ${drafts.length} записи. Покажу по очереди, каждую подтвердите ✅.`);
@@ -750,6 +751,12 @@ async function onCallback(ctx, q) {
   const mid = q.message.message_id;
   let st = await getSt(ctx);
   await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
+  if (k === 'pt') {                                  // PS SHOP: ➕ доход / ➖ расход
+    const type = v === '+' ? 'Доход' : 'Расход';
+    await putSt(ctx, { dir: st.dir || 'PS SHOP', ptype: type });
+    await edit(ctx, mid, `<b>PS SHOP ${v === '+' ? '➕ доход' : '➖ расход'}</b>`);
+    return send(ctx, v === '+' ? 'Пишите доход. Например: «игра 450 000 на Приёмку».' : 'Пишите расход. Например: «OLX 50 000 с Расходки».', [[BACK]]);
+  }
   if (k === 'd') {                                   // направление
     const dir = DIRS[+v];
     if (st.d && !st.d.dir) { remember(st); st.d.dir = dir; refill(cfg, st.d); await edit(ctx, mid, '🏢 ' + dir); return askNext(ctx, cfg, st); }
@@ -759,8 +766,7 @@ async function onCallback(ctx, q) {
     await putSt(ctx, { dir });
     const extra = dir === 'PS SHOP' ? [[['Закрыл оплату поставщику ✅', 'sup']]] : dir === 'Аренда PS5' ? [[['📋 Залоги и брони', 'zl']]] : [];
     extra.push([BACK]);                                   // назад в главное меню
-    const E = id => `<tg-emoji emoji-id="${id}">🅰️</tg-emoji>`;      // плюс / минус — премиум-эмодзи владельца
-    if (dir === 'PS SHOP') return send(ctx, `<b>PS SHOP ${E('5442846010785151030')} или ${E('5442918359509251481')} ?</b>`, extra);
+    if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [[['+', 'pt:+'], ['−', 'pt:-']], ...extra]);
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
   if (k === 'bk' && st.tool) { await edit(ctx, mid, '<tg-emoji emoji-id="5215261582170278752">⬅️</tg-emoji>'); await putSt(ctx, {}); return dirMenu(ctx); }
