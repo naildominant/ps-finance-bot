@@ -93,24 +93,28 @@ function parseAmount(s) {
   return { amount: n, cur: m[3] && /\$|долл/.test(m[3]) ? '$' : null };
 }
 
-// ---------- Разбор текста ИИ ----------
+// ---------- Разбор текста ИИ (одна или несколько записей) ----------
 async function aiParse(ctx, cfg, dir, text) {
-  const cats = cfg.cats.filter(c => c.dir === dir);
-  const list = k => [...new Set(cats.filter(c => c.kind === k).map(c => c.group === c.cat ? c.cat : `${c.group} / ${c.cat}`))].join('; ');
-  const sys = `Ты разбираешь запись о деньгах для учёта. Направление: ${dir}. Сегодня ${todayYmd()} (Ташкент).
-Верни ТОЛЬКО JSON: {"type": "Доход"|"Расход"|"Между своими"|null, "amount": число|null, "currency": "сум"|"$"|null,
-"category": строка из списка или null, "card_from": карта или null, "card_to": карта или null, "date": "YYYY-MM-DD"|null, "comment": коротко о чём запись или ""}.
-Правила: сумма числом без пробелов ("50к"=50000, "1,5 млн"=1500000, "полтора миллиона"=1500000). Доллары: "$", "долларов", "бакс" → currency "$".
-Нет суммы — amount null. Не уверен в типе или категории — null, НЕ угадывай.
-"Между своими" — перевод между своими картами (с карты на карту, снял наличные, положил на карту).
-Для расхода карта — card_from, для дохода — card_to. Дата: "вчера", "позавчера", "25 ноября" → YYYY-MM-DD, не сказано → null.
-Категории дохода: ${list('Доход')}.
-Категории расхода: ${list('Расход')}.
-Карты (пиши название точно как здесь): ${cfg.cards.map(c => c.name).join('; ')}. "нал", "наличка", "кэш" = Нал. "доллары наличные" = Доллары.`;
-  const r = await ctx.env.AI.run(MODEL, { messages: [{ role: 'system', content: sys }, { role: 'user', content: text }], max_tokens: 300, temperature: 0 });
+  const catList = (dd, k) => [...new Set(cfg.cats.filter(c => c.dir === dd && c.kind === k).map(c => c.group === c.cat ? c.cat : `${c.group} / ${c.cat}`))].join('; ');
+  const dirs = DIRS.map(dd => `${dd}: доход — ${catList(dd, 'Доход')}; расход — ${catList(dd, 'Расход')}`).join('\n');
+  const sys = `Ты разбираешь сообщение о деньгах для учёта. Сегодня ${todayYmd()} (Ташкент). ${dir ? 'Пользователь выбрал направление: ' + dir + '.' : ''}
+В сообщении может быть ОДНА или НЕСКОЛЬКО операций. Раздели их.
+Верни ТОЛЬКО JSON: {"records":[{"text": точный кусок сообщения про эту операцию, "direction": "PS SHOP"|"Аренда PS5"|"Leadex"|"Личное"|null,
+"type": "Доход"|"Расход"|"Между своими"|null, "amount": число|null, "currency": "сум"|"$"|null, "category": из списка направления или null,
+"card_from": карта или null, "card_to": карта или null, "date": "YYYY-MM-DD"|null}]}
+Правила: сумма числом ("50к"=50000, "1,5 млн"=1500000, "миллион 800"=1800000, "полтора миллиона"=1500000). "$", "долларов", "бакс" → currency "$".
+Направление: личные траты (еда, кафе, плов, аптека, квартира, такси, одежда) — Личное; продажа игр, подписок, аккаунтов, поставщик, OLX — PS SHOP; аренда приставок PS5 — Аренда PS5; сайты, Leadex — Leadex. ${dir ? 'Если операция одна — направление ' + dir + '.' : ''} Не ясно — null.
+"пришло", "получил", "заплатили мне", "взял за" — Доход. "потратил", "купил", "заплатил", "поели", "расход" — Расход. Перевод между своими картами, снял наличные — "Между своими". Не уверен — null.
+Нет суммы — amount null. Не уверен в категории — null, НЕ угадывай. Для расхода карта — card_from, для дохода — card_to.
+Дата: "вчера", "позавчера", "25 ноября" → YYYY-MM-DD, не сказано → null.
+Категории по направлениям:
+${dirs}
+Карты (пиши точно как здесь): ${cfg.cards.map(c => c.name).join('; ')}. "нал", "наличка", "кэш" = Нал. "доллары наличные" = Доллары.`;
+  const r = await ctx.env.AI.run(MODEL, { messages: [{ role: 'system', content: sys }, { role: 'user', content: text }], max_tokens: 900, temperature: 0 });
   const raw = typeof r.response === 'string' ? r.response : JSON.stringify(r.response);
   const m = raw.match(/\{[\s\S]*\}/);
-  return m ? JSON.parse(m[0]) : {};
+  const j = m ? JSON.parse(m[0]) : {};
+  return Array.isArray(j.records) ? j.records : [j];
 }
 
 // сопоставить ответ ИИ со справочником
@@ -123,11 +127,24 @@ function matchCat(cfg, d, s) {
 }
 // категория считается названной, если в тексте есть слово, похожее на слово из названия (первые 4 буквы)
 const SYN = { 'Продукты': ['продукт', 'еда', 'магазин', 'корзин'], 'Квартира': ['квартир', 'аренд', 'коммун', 'свет', 'газ', 'интернет', 'связь'], 'Такси': ['такси', 'яндекс'] };
-function said(text, c) {
+// слова, общие с соседними категориями (например «Игры» у «Игры PS5» и «Игры PS4»), не считаются — нужно отличающее слово
+function said(text, c, pool) {
   const t = text.toLowerCase().replace(/ё/g, 'е');
-  const words = (c.group + ' ' + c.cat).toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-я0-9]+/).filter(w => w.length >= 3 && !['для', 'игр'].includes(w));
+  const W = x => (x.group + ' ' + x.cat).toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-я0-9]+/).filter(w => w.length >= 3 && w !== 'для');
+  const others = new Set((pool || []).filter(x => x.group !== c.group).flatMap(W));
+  const stem = w => w.slice(0, Math.min(5, Math.max(3, w.length - 2)));
+  if (W(c).every(w => t.includes(stem(w)))) return true;          // названы все слова категории («игра на ps4»)
+  const words = W(c).filter(w => !others.has(w));
   const stems = words.map(w => w.slice(0, Math.min(5, Math.max(3, w.length - 2)))).concat(SYN[c.group] || []);
   return stems.some(st => t.includes(st));
+}
+// карта, названная прямо в тексте: короткое имя, «нал/наличка/кэш», «доллары», 4 цифры
+function cardInText(cfg, text) {
+  const t = ' ' + text.toLowerCase().replace(/ё/g, 'е') + ' ';
+  if (/\s(доллар|бакс|\$)/.test(t) && /налич|нал\b|кэш/.test(t)) return cfg.cards.find(c => c.name === 'Доллары') || null;
+  if (/налич|\sнал(ом)?[\s.,!]|кэш/.test(t)) return cfg.cards.find(c => c.name === 'Нал') || null;
+  return cfg.cards.find(c => { const short = c.name.toLowerCase().split(' (')[0].replace(/ё/g, 'е'), dig = (c.name.match(/\d{4}/) || [])[0];
+    return (short.length >= 3 && t.includes(short.slice(0, Math.max(3, short.length - 1)))) || (dig && t.includes(dig)); }) || null;
 }
 function matchCard(cfg, s) {
   if (!s) return null;
@@ -153,7 +170,7 @@ const putSt = (ctx, st) => store(ctx, { op: 'put', k: stKey(ctx), v: st });
 
 function summary(d) {
   const L = [];
-  L.push(`<b>${d.edit ? '✏️ Исправление записи ' + d.edit : 'Проверьте запись'}</b>`);
+  L.push(`<b>${d.edit ? '✏️ Исправление записи ' + d.edit : 'Проверьте запись'}</b>${d.of > 1 && !d.edit ? ` (${d.n} из ${d.of})` : ''}`);
   L.push(`🏢 ${d.dir}`);
   L.push(`🔄 ${d.type || '—'}`);
   L.push(`💰 ${d.amount != null ? (d.cur === '$' ? '$' + d.amount : fmt(d.amount) + ' сум') : '—'}`);
@@ -168,6 +185,8 @@ function summary(d) {
 // Чего не хватает → спросить. Возвращает true, если всё заполнено.
 async function askNext(ctx, cfg, st) {
   const d = st.d;
+  if (!d.dir) { st.await = null; await putSt(ctx, st);
+    return void await send(ctx, `К какому направлению относится: «${esc(d.comment)}»?`, withBack([[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']]])); }
   if (!d.type) { st.await = null; await putSt(ctx, st);
     return void await send(ctx, 'Это доход, расход или перевод между своими картами?', withBack([TYPES.map((t, i) => [TLABEL(t), 'ty:' + i])])); }
   if (d.amount == null) { st.await = 'amount'; await putSt(ctx, st);
@@ -251,8 +270,7 @@ async function onMessage(ctx, m) {
     if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>24.11</code> или «вчера».');
     remember(st); st.d.date = y; return reshow(ctx, st);
   }
-  if (!st.dir) { await putSt(ctx, { pending: text }); return dirMenu(ctx); }
-  return startDraft(ctx, cfg, st.dir, text);
+  return startDraft(ctx, cfg, st.dir || null, text);   // без выбранного направления: одна запись — спросим кнопкой, несколько — направление по смыслу
 }
 const complete = d => d.type && d.amount != null && (d.type === 'Между своими' ? d.from && d.to : d.cat && (d.type === 'Расход' ? d.from : d.to));
 async function reshow(ctx, st) {
@@ -260,19 +278,37 @@ async function reshow(ctx, st) {
   st.await = null; await putSt(ctx, st);
   return send(ctx, summary(st.d), [[['✅ Записать', 'ok'], ['❌ Отменить', 'no'], ['✏️ Правка', 'ed']], [BACK]]); }
 
+function draftFrom(cfg, dir, p, text, single) {
+  const piece = single ? text : String(p.text || text);
+  const d = { dir: single ? (dir || null) : (DIRS.includes(p.direction) ? p.direction : dir || null),
+    type: TYPES.includes(p.type) ? p.type : null, amount: typeof p.amount === 'number' && p.amount > 0 ? p.amount : null,
+    cur: p.currency === '$' ? '$' : 'сум', date: parseDate(p.date) || todayYmd(), comment: piece.slice(0, 200), src: 'текст',
+    time: nowT().toISOString().slice(11, 16) };
+  if (d.amount == null && single) { const a = parseAmount((text.match(/\$?\d[\d\s.,]*\s*(к|тыс|млн|\$)?/i) || [''])[0]); if (a && a.amount) { d.amount = a.amount; if (a.cur) d.cur = a.cur; } }
+  if (d.type && d.dir) { const c = matchCat(cfg, d, p.category); if (c && said(piece, c, cfg.cats.filter(x => x.dir === d.dir && x.kind === d.type))) { d.group = c.group; d.cat = c.cat; } }
+  const ok = (c, side) => c && (d.type === 'Доход' ? c.inc.includes(d.dir) : d.type === 'Расход' ? c.exp.includes(d.dir) : true) ? c.name : null;
+  let cf = matchCard(cfg, p.card_from), ct = matchCard(cfg, p.card_to);
+  if (!cf && !ct && d.type !== 'Между своими') cf = ct = cardInText(cfg, piece);
+  if (d.type === 'Между своими') { if (cf) d.from = cf.name; if (ct) d.to = ct.name; }
+  if (d.type === 'Доход') d.to = ok(ct) || ok(cf);
+  if (d.type === 'Расход') d.from = ok(cf) || ok(ct);
+  return d;
+}
 async function startDraft(ctx, cfg, dir, text) {
-  let p = {};
-  try { p = await aiParse(ctx, cfg, dir, text); } catch (e) { p = {}; }
-  const d = { dir, type: TYPES.includes(p.type) ? p.type : null, amount: typeof p.amount === 'number' && p.amount > 0 ? p.amount : null,
-    cur: p.currency === '$' ? '$' : 'сум', date: parseDate(p.date) || todayYmd(), comment: text.slice(0, 200), src: 'текст', time: nowT().toISOString().slice(11, 16) };
-  if (d.amount == null) { const a = parseAmount((text.match(/\$?\d[\d\s.,]*\s*(к|тыс|млн|\$)?/i) || [''])[0]); if (a && a.amount) { d.amount = a.amount; if (a.cur) d.cur = a.cur; } }
-  if (d.type) { const c = matchCat(cfg, d, p.category); if (c && said(text, c)) { d.group = c.group; d.cat = c.cat; } }
-  const cf = matchCard(cfg, p.card_from), ct = matchCard(cfg, p.card_to);
-  if (cf) d.from = cf.name; if (ct) d.to = ct.name;
-  if (d.type === 'Доход' && !d.to && cf) d.to = cf.name;
-  if (d.type === 'Расход' && !d.from && ct) d.from = ct.name;
-  const st = { dir: null, d };
+  let recs = [];
+  try { recs = await aiParse(ctx, cfg, dir, text); } catch (e) { recs = []; }
+  if (!recs.length) recs = [{}];
+  const single = recs.length === 1;
+  const drafts = recs.map(p => draftFrom(cfg, dir, p, text, single));
+  if (!single) await send(ctx, `Нашёл ${drafts.length} записи. Покажу по очереди, каждую подтвердите ✅.`);
+  drafts.forEach((d, i) => { d.n = i + 1; d.of = drafts.length; });
+  const st = { dir: null, d: drafts[0], queue: drafts.slice(1) };
   return askNext(ctx, cfg, st);
+}
+// следующая запись из очереди или меню направлений
+async function nextOrMenu(ctx, cfg, st) {
+  if (st.queue && st.queue.length) { const nst = { d: st.queue[0], queue: st.queue.slice(1) }; return askNext(ctx, cfg, nst); }
+  await putSt(ctx, {}); return dirMenu(ctx);
 }
 
 async function onCallback(ctx, q) {
@@ -283,6 +319,7 @@ async function onCallback(ctx, q) {
   await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
   if (k === 'd') {                                   // направление
     const dir = DIRS[+v];
+    if (st.d && !st.d.dir) { remember(st); st.d.dir = dir; await edit(ctx, mid, '🏢 ' + dir); return askNext(ctx, cfg, st); }
     if (st.d && st.editDir) { st.d.dir = dir; st.d.group = st.d.cat = null; st.editDir = false; await edit(ctx, mid, '🏢 ' + dir); return st.d.type === 'Между своими' ? reshow(ctx, st) : askGroup(ctx, cfg, st); }
     await edit(ctx, mid, '🏢 ' + dir);
     if (st.pending) return startDraft(ctx, cfg, dir, st.pending);
@@ -311,16 +348,14 @@ async function onCallback(ctx, q) {
   }
   if (k === 'k') { const c = cfg.cards[+v]; d[st.side] = c.name; await edit(ctx, mid, '💳 ' + c.name); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
   if (k === 'dt') { d.date = v === '0' ? todayYmd() : shiftYmd(todayYmd(), -Number(v)); await edit(ctx, mid, '📅 ' + human(d.date)); return reshow(ctx, st); }
-  if (k === 'no') { await putSt(ctx, {}); await edit(ctx, mid, '❌ Отменено, ничего не записал.'); return dirMenu(ctx); }
+  if (k === 'no') { await edit(ctx, mid, '❌ Отменено, эту запись не записал.'); return nextOrMenu(ctx, cfg, st); }
   if (k === 'ok') {
     if (!complete(d)) return askNext(ctx, cfg, st);
     await edit(ctx, mid, summary(d) + '\n\n⏳ Записываю…');
     try {
       const id = await save(ctx, cfg, d);
-      await putSt(ctx, {});
-      await edit(ctx, mid, summary({ ...d, edit: null }).replace('<b>Проверьте запись</b>', `<b>✅ Записано · ${id}</b>`),
-        [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
-      return dirMenu(ctx);
+      await edit(ctx, mid, `✅ Записано · ${id}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
+      return nextOrMenu(ctx, cfg, st);
     } catch (e) { return edit(ctx, mid, summary(d) + '\n\n⚠️ Не получилось записать: ' + e.message, [[['✅ Ещё раз', 'ok'], ['❌ Отменить', 'no']]]); }
   }
   if (k === 'ed') {
