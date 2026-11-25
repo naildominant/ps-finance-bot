@@ -448,6 +448,47 @@ async function morning(env) {
   }
 }
 
+
+// ---------- Leadex: распределение каждого поступления ----------
+// 20% фонд, 20% возврат вложений Наилю (пока не вернулись), из остального — расходы Leadex с прошлого поступления, остаток 50/50.
+// Карты получателей пока не заданы (владелец 26.11: «сделай пока виртуальную кнопку»).
+async function leadexSplit(ctx, cfg, id, amount) {
+  const last = (await store(ctx, { op: 'get', k: 'lxLast' })) || 0;
+  const [j, debt] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: 'A2:M3000' }, { op: 'get', sheet: 'Долги и накопления', range: 'F6' }]);
+  const exp = j.values.filter(r => r[3] === 'Leadex' && r[4] === 'Расход' && r[12] !== 'удалено' && r[1] && r[1].d > last).reduce((a, r) => a + (Number(r[7]) || 0), 0);
+  const invLeft = Math.max(0, Number(debt.values[0][0]) || 0);
+  const fund = Math.round(amount * 0.2);
+  const ret = Math.min(Math.round(amount * 0.2), invLeft);
+  const pool = amount - fund - ret;                       // 60% (или больше, если вложения уже вернулись)
+  const over = exp > pool;
+  const rest = over ? 0 : pool - exp;
+  const half = Math.round(rest / 2);
+  const x = { id, amount, exp, fund, ret, invLeft, rest, nail: half, rishat: rest - half, over, at: Date.now() };
+  await store(ctx, { op: 'put', k: 'lx:' + id, v: x });
+  const L = [`💼 <b>Leadex: пришло ${fmt(amount)} сум</b> (${id})`,
+    `Расходы Leadex с прошлого поступления: ${fmt(exp)}`, '',
+    `• Фонд Leadex 20%: <b>${fmt(fund)}</b> → карта фонда (не выбрана)`,
+    ret ? `• Возврат вложений вам: <b>${fmt(ret)}</b> (останется вернуть ${fmt(invLeft - ret)})` : '• Вложения уже возвращены',
+    over ? `⚠️ Расходы (${fmt(exp)}) больше, чем осталось на них (${fmt(pool)}). Правило на этот случай ещё не решено — доли не начисляю.`
+         : `• Расходы покрыты: ${fmt(exp)}\n• Вам 50%: <b>${fmt(half)}</b>\n• Ришату 50%: <b>${fmt(rest - half)}</b> → карта Ришата (не выбрана)`];
+  return send(ctx, L.join('\n'), [[['✅ Перевёл', 'lxok:' + id], ['Позже', 'lxno:' + id]]]);
+}
+async function onLeadex(ctx, q) {
+  const cfg = await config(ctx); const [k, id] = q.data.split(':'); const mid = q.message.message_id;
+  await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
+  const x = await store(ctx, { op: 'get', k: 'lx:' + id });
+  if (!x) return edit(ctx, mid, 'Расчёт не найден.');
+  if (k === 'lxno') return edit(ctx, mid, 'Хорошо, напомню позже. Кнопка «✅ Перевёл» остаётся выше.', [[['✅ Перевёл', 'lxok:' + id]]]);
+  if (x.done) return edit(ctx, mid, 'Уже отмечено.');
+  const recs = [];
+  if (x.ret) recs.push(await botRec(ctx, cfg, { dir: 'Leadex', type: 'Возврат вложений', cat: 'Возврат вложений Leadex', amount: x.ret, comment: 'Возврат вложений из ' + id }));
+  if (x.nail) recs.push(await botRec(ctx, cfg, { dir: 'Личное', type: 'Доход', group: 'Доля из Leadex (50%)', cat: 'Доля из Leadex (50%)', amount: x.nail, comment: 'Доля из ' + id }));
+  await gas(ctx, [{ op: 'append', sheet: 'Доли', row: [{ d: Date.now() }, id, x.amount, x.over ? 0 : x.exp, x.fund, x.ret, x.nail, x.rishat, x.over ? 'расходы > 60%, доли не начислены' : 'отмечено'] }]);
+  x.done = true; await store(ctx, { op: 'put', k: 'lx:' + id, v: x });
+  if (!ctx.dry) await store(ctx, { op: 'put', k: 'lxLast', v: Date.now() });
+  return edit(ctx, mid, `✅ Отмечено. ${recs.length ? 'Записал: ' + recs.join(', ') + '. ' : ''}Таблица «Доли» обновлена.`);
+}
+
 // ---------- Обработка ----------
 async function onMessage(ctx, m) {
   const cfg = await config(ctx);
@@ -505,6 +546,7 @@ function draftFrom(cfg, dir, p, text, single) {
     type: TYPES.includes(p.type) ? p.type : null, amount: typeof p.amount === 'number' && p.amount > 0 ? p.amount : null,
     cur: p.currency === '$' ? '$' : 'сум', date: parseDate(p.date) || todayYmd(), comment: piece.slice(0, 200), src: 'текст',
     time: nowT().toISOString().slice(11, 16) };
+  fixType(d);
   if (d.type === 'Предоплата' && p.book) { d.book = parseDate(p.book); if (d.date === d.book) d.date = todayYmd(); }  // дата операции ≠ дата брони
   if (d.amount == null && single) { const a = parseAmount((text.match(/\$?\d[\d\s.,]*\s*(к|тыс|млн|\$)?/i) || [''])[0]); if (a && a.amount) { d.amount = a.amount; if (a.cur) d.cur = a.cur; } }
   if (d.type && d.dir) {
@@ -523,7 +565,10 @@ function draftFrom(cfg, dir, p, text, single) {
   return d;
 }
 // направление выбрано позже — заново поискать категорию и карту по тексту записи
+// «Предоплата» и «Залог» как чужие деньги — только в аренде; в других направлениях «предоплата за сайт» — обычный доход
+function fixType(d) { if (d.dir && d.dir !== 'Аренда PS5' && (d.type === 'Предоплата' || d.type === 'Залог')) d.type = 'Доход'; }
 function refill(cfg, d) {
+  fixType(d);
   if (!d.type) return;
   if (!needsCat(d.type)) { const c = cardInText(cfg, d.comment); if (c && isOut(d.type) && !d.from) d.from = c.name; if (c && isIn(d.type) && !d.to) d.to = c.name; return; }
   const pool = cfg.cats.filter(x => x.dir === d.dir && x.kind === d.type);
@@ -598,6 +643,10 @@ async function onCallback(ctx, q) {
     try {
       const id = await save(ctx, cfg, d);
       await edit(ctx, mid, `✅ Записано · ${id}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
+      if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
+        const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
+        await leadexSplit(ctx, cfg, id, uzs);
+      }
       return nextOrMenu(ctx, cfg, st);
     } catch (e) { return edit(ctx, mid, summary(d) + '\n\n⚠️ Не получилось записать: ' + e.message, [[['✅ Ещё раз', 'ok'], ['❌ Отменить', 'no']]]); }
   }
@@ -658,6 +707,7 @@ async function handle(ctx, upd) {
   }
   if (q && q.message) { ctx.orig = q.message.text || ''; ctx.origMid = q.message.message_id; }
   try {
+    if (q && /^lx(ok|no):/.test(q.data)) return await onLeadex(ctx, q);
     if (q && /^(zl|adj|aj|zr|zry|zp|zk|pc|pb|p0|pk)(:|$)/.test(q.data)) return await onTool(ctx, q);
     if (q) return /^(rm|rmy|rmn|fx):/.test(q.data) ? await onSavedButton(ctx, q) : await onCallback(ctx, q);
     return await onMessage(ctx, m);
