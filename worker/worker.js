@@ -671,7 +671,7 @@ async function onMessage(ctx, m) {
   if (m.sticker && m.sticker.custom_emoji_id) ce.push({ custom_emoji_id: m.sticker.custom_emoji_id });   // id премиум-эмодзи владельца (для меню)
   if (ce.length && !ctx.dry) for (const e of ce) await ctx.env.KV.put('ce:' + e.custom_emoji_id, JSON.stringify({ text, at: Date.now() }));
   if (ce.length && !text.replace(/[\s\u{FE0F}\u{200D}\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{2B05}-\u{2B07}\u{2190}-\u{21FF}]/gu, '')) return send(ctx, 'Эмодзи запомнил 👌');
-  if (/^/(start|menu)$/i.test(text) || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
+  if (/^\/(start|menu)$/i.test(text) || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
   if (m.voice || m.audio || m.video_note) {
     const f = m.voice || m.audio || m.video_note;
     const said = await transcribe(ctx, await tgFile(ctx, f.file_id));
