@@ -297,6 +297,8 @@ async function askCard(ctx, cfg, st, side, q) {
   await send(ctx, q, withBack(chunk((list.length ? list : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [c.name, 'k:' + i]), 2)));
 }
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
+// эмодзи владельца после записи (владелец 26.11): расход — 💸; доход — ждём эмодзи
+const DONE_EMO = { 'Расход': '5319172285762919855' };
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
 const dirMenu = ctx => send(ctx, PAD(3) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(5) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['💳 Баланс', 'adj']], [['📄 Открыть таблицу', SHEET_URL]]]);
 
@@ -806,6 +808,7 @@ async function onCallback(ctx, q) {
         const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
         await leadexSplit(ctx, cfg, id, uzs);
       }
+      if (!d.edit && DONE_EMO[d.type]) await send(ctx, `<tg-emoji emoji-id="${DONE_EMO[d.type]}">💸</tg-emoji>`);   // один раз в конце записи
       return nextOrMenu(ctx, cfg, st);
     } catch (e) { return edit(ctx, mid, summary(d) + '\n\n⚠️ Не получилось записать: ' + e.message, [[['✅ Ещё раз', 'ok'], ['❌ Отменить', 'no']]]); }
   }
@@ -868,8 +871,6 @@ async function handle(ctx, upd) {
     return;
   }
   if (q && q.message) { ctx.orig = q.message.text || ''; ctx.origMid = q.message.message_id; }
-  // «бот думает»: премиум-эмодзи владельца перед каждым ответом; не удаляется (владелец 26.11)
-   if (!ctx.dry) await send(ctx, '<tg-emoji emoji-id="5319172285762919855">💸</tg-emoji>').catch(() => null);
   try {
     if (q && /^lx(ok|no|in|if):/.test(q.data)) return await onLeadex(ctx, q);
     if (q && /^(rsv|rsvl|bro|brol|rsvf|brof):/.test(q.data)) return await onShares(ctx, q);
