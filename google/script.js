@@ -1,6 +1,7 @@
 // PS Финансы — скрипт внутри таблицы (Расширения → Apps Script).
 // Бот (сервер psfinance) шлёт сюда запросы: записать строку, изменить ячейки, прочитать данные.
 // Каждую ночь делает копию таблицы на Google Диск (папка «PS Финансы — копии»).
+var SHEET_ID = '1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU';
 var KEY = 'PUT_KEY_HERE';               // секрет, совпадает с секретом на сервере
 var BACKUP_FOLDER = 'PS Финансы — копии';
 var KEEP_BACKUPS = 60;                  // сколько последних копий хранить
@@ -10,7 +11,7 @@ function doPost(e) {
   try {
     var req = JSON.parse(e.postData.contents);
     if (req.key !== KEY) return json({ ok: false, error: 'forbidden' });
-    var ss = SpreadsheetApp.getActive();
+    var ss = SpreadsheetApp.openById(SHEET_ID);
     var res = [];
     (req.ops || []).forEach(function (op) { res.push(run(ss, op)); });
     SpreadsheetApp.flush();
@@ -48,7 +49,7 @@ function json(o) { return ContentService.createTextOutput(JSON.stringify(o)).set
 
 // Ежедневная копия таблицы
 function backup() {
-  var file = DriveApp.getFileById(SpreadsheetApp.getActive().getId());
+  var file = DriveApp.getFileById(SpreadsheetApp.openById(SHEET_ID).getId());
   var it = DriveApp.getFoldersByName(BACKUP_FOLDER);
   var folder = it.hasNext() ? it.next() : DriveApp.createFolder(BACKUP_FOLDER);
   var name = 'PS Финансы ' + Utilities.formatDate(new Date(), 'Asia/Tashkent', 'yyyy-MM-dd');
