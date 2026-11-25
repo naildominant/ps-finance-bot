@@ -45,3 +45,6 @@ Bot must match by short name, bank or last digits. Main sheet has 3 charts (mont
 - Parse: Workers AI llama-3.3-70b → JSON; card prefilled if said, else buttons. Types now: Доход / Расход / Между своими (Предоплата/Вложение/Залог — stage 4–5).
 - Delete = status «удалено» in Журнал col M; edit after save overwrites the row. CBU rate for today written to Настройки!B2 once a day on first save.
 - Dry-run endpoint POST /test?k=GAS_KEY (no Telegram, no sheet writes); script in scratchpad t.py (UA must not be python-urllib — Cloudflare 403).
+
+## TEST MODE (owner 26.11) — ACTIVE until owner says «тест окончен»
+Everything writes normally. On «тест окончен»: clear Журнал rows 2+, reset DO counter `seq` to 0 and drafts, clear Залоги rows except Z1, restore Карты/Категории/Лимиты/Настройки/Долги from snapshot «PS Финансы — эталон до теста (не трогать)» id 195unlZd8U0OZcl3hj2LO7If4z9qlUjmgOpks2AcI71I (keep Настройки!B16 owner ID; ask owner whether balances changed since 25.11 and update Карты D before restart). Then trash nothing without asking.
