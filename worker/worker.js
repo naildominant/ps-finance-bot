@@ -701,7 +701,7 @@ async function reshow(ctx, st) {
 
 function draftFrom(cfg, dir, p, text, single) {
   const piece = single ? text : String(p.text || text);
-  const d = { dir: single ? (dir || null) : (DIRS.includes(p.direction) ? p.direction : dir || null),
+  const d = { dir: dir || (DIRS.includes(p.direction) ? p.direction : null),   // направление из слов, если раздел не выбран
     type: TYPES.includes(p.type) ? p.type : null, amount: typeof p.amount === 'number' && p.amount > 0 ? p.amount : null,
     cur: p.currency === '$' ? '$' : 'сум', date: parseDate(p.date) || todayYmd(), comment: piece.slice(0, 200), src: 'текст',
     time: nowT().toISOString().slice(11, 16) };

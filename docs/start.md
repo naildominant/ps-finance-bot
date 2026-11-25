@@ -63,3 +63,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - «💳 Баланс» (owner 26.11) = only shows all card balances (Карты A/I/J), total UZS excl. $ and Арс. Correction (Корректировка) no longer reachable from menu (code aj: kept) — ask owner where to put it.
 - PS SHOP screen (owner 26.11): «PS SHOP ?» bold; row [+][−] (owner premium icons, text ' '), green «Закрыл оплату поставщику ✅», Back. + / − preset type Доход/Расход (st.ptype → ctx.ptype → recs[0].type).
 - Done emoji (owner 26.11): after a record is saved, ONE premium emoji, then menu: Расход → 5319172285762919855 (DONE_EMO map); Доход → 5449418135381759397. Not on every action. Supplier button icon = owner checkmark 5465154027970908359. Menu centered with U+2800 pads on both sides (PAD).
+- Direction (owner 26.11): if section not chosen, single record takes AI direction from words (was: always asked by button). Asks only if AI unsure.
