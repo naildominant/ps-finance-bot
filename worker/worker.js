@@ -21,10 +21,10 @@ async function tg(ctx, method, body) {
 const ICON = { 'Закрыл оплату поставщику ✅': ['Закрыл оплату поставщику', '5465154027970908359'], '+': [' ', '5253652327734192243'], '−': [' ', '5255775038010829248'], '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
   'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['Leadex', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
 // цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
-const STYLE = { 'Предоплата': 'success', 'Залог': 'primary', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
-const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data]) => {
+const STYLE = { 'Сегодня': 'primary', 'Завтра': 'primary', 'Послезавтра': 'primary', 'Другая дата': 'primary', 'Предоплата': 'success', 'Залог': 'primary', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
+const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data, style]) => {
   const b = ICON[text] ? { text: ICON[text][0], icon_custom_emoji_id: ICON[text][1] } : { text };
-  if (STYLE[text]) b.style = STYLE[text];
+  if (style || STYLE[text]) b.style = style || STYLE[text];
   return /^https?:/.test(data) ? { ...b, url: data } : { ...b, callback_data: data }; })) });
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU/edit';
 const send = async (ctx, text, rows) => {
@@ -296,7 +296,7 @@ async function askNext(ctx, cfg, st) {
   if (isIn(d.type) && !d.to) return void await askCard(ctx, cfg, st, 'to', '💳 На какую карту пришли деньги?');
   if (d.type === 'Предоплата' && !d.book) { st.await = 'book'; await putSt(ctx, st);
     return void await send(ctx, '📅 На какую дату бронь? Нажмите кнопку или напишите, например, <code>28.11</code>.',
-      withBack([[['Сегодня', 'bd:0'], ['Завтра', 'bd:1'], ['Послезавтра', 'bd:2']]])); }
+      withBack([[['Сегодня', 'bd:0'], ['Завтра', 'bd:1'], ['Послезавтра', 'bd:2']], [['Другая дата', 'cl:' + todayYmd().slice(0, 7)]]])); }
   st.await = null; await putSt(ctx, st);
   await send(ctx, summary(d), [[['✅ Записать', 'ok'], ['❌ Отменить', 'no'], ['✏️ Правка', 'ed']], [BACK]]);
   return true;
@@ -770,6 +770,26 @@ async function nextOrMenu(ctx, cfg, st) {
   await putSt(ctx, {}); return dirMenu(ctx);
 }
 
+
+// календарь брони: дни с открытыми бронями — красные, сегодня — синий, прошедшие — недоступны
+const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+async function calendar(ctx, ym) {
+  const booked = {};
+  for (const x of await openItems(ctx)) if (x.type === 'Предоплата' && x.book && x.book.d) { const k = ymdT(new Date(x.book.d + TZ_MS)); booked[k] = (booked[k] || 0) + 1; }
+  const [y, m] = ym.split('-').map(Number), today = todayYmd();
+  const first = new Date(Date.UTC(y, m - 1, 1)), days = new Date(Date.UTC(y, m, 0)).getUTCDate(), lead = (first.getUTCDay() + 6) % 7;
+  const rows = [[[`${MONTHS[m - 1]} ${y}`, 'noop']], ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(w => [w, 'noop'])];
+  let row = Array.from({ length: lead }, () => ['⠀', 'noop']);
+  for (let dd = 1; dd <= days; dd++) {
+    const k = `${y}-${String(m).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+    row.push(k < today ? ['·', 'noop'] : [String(dd) + (booked[k] ? '•' : ''), 'cd:' + k, booked[k] ? 'danger' : k === today ? 'primary' : null]);
+    if (row.length === 7) { rows.push(row); row = []; }
+  }
+  if (row.length) { while (row.length < 7) row.push(['⠀', 'noop']); rows.push(row); }
+  const sh = n => { const t = new Date(Date.UTC(y, m - 1 + n, 1)); return ymdT(t).slice(0, 7); };
+  rows.push([['◀️', 'cl:' + sh(-1)], ['▶️', 'cl:' + sh(1)]], [BACK]);
+  return rows;
+}
 async function onCallback(ctx, q) {
   const cfg = await config(ctx);
   const [k, v] = q.data.split(':');
@@ -827,6 +847,11 @@ async function onCallback(ctx, q) {
     d.cat = subs[+v].cat; await gone(ctx, mid); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st);
   }
   if (k === 'k') { const c = cfg.cards[+v]; d[st.side] = c.name; await gone(ctx, mid); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
+  if (k === 'cl' && d) {                            // календарь: открыть / листать месяц
+    const txt = '<b>📅 Выберите дату брони</b>\nКрасные дни • — уже есть бронь.';
+    return q.message.text && q.message.text.startsWith('📅 Выберите') ? edit(ctx, mid, txt, await calendar(ctx, v)) : (await gone(ctx, mid), send(ctx, txt, await calendar(ctx, v)));
+  }
+  if (k === 'cd' && d) { d.book = v; await gone(ctx, mid); return reshow(ctx, st); }
   if (k === 'bd') { d.book = shiftYmd(todayYmd(), Number(v)); await gone(ctx, mid); return reshow(ctx, st); }
   if (k === 'dt') { d.date = v === '0' ? todayYmd() : shiftYmd(todayYmd(), -Number(v)); await gone(ctx, mid); return reshow(ctx, st); }
   if (k === 'no') { await gone(ctx, mid); return nextOrMenu(ctx, cfg, st); }
@@ -905,6 +930,7 @@ async function handle(ctx, upd) {
     await ctx.env.KV.put('seen:' + from.id, JSON.stringify({ id: from.id, name: [from.first_name, from.last_name].filter(Boolean).join(' '), user: from.username || '', at: Date.now() }));
     return;
   }
+  if (q && q.data === 'noop') return tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
   if (q && q.message) { ctx.orig = q.message.text || ''; ctx.origMid = q.message.message_id; }
   ctx.trail = m ? [m.message_id] : [];
   if (q && q.message && q.message.reply_markup) {        // нажата кнопка с премиум-эмодзи → бот присылает этот эмодзи (владелец 26.11)
