@@ -62,4 +62,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - Button colors (owner 26.11): STYLE map — PS SHOP primary (blue), Аренда success (green), Leadex danger (red), Личное primary (blue). Direction buttons have owner's premium emoji (ICON map).
 - «💳 Баланс» (owner 26.11) = only shows all card balances (Карты A/I/J), total UZS excl. $ and Арс. Correction (Корректировка) no longer reachable from menu (code aj: kept) — ask owner where to put it.
 - PS SHOP screen (owner 26.11): «PS SHOP ?» bold; row [+][−] (owner premium icons, text ' '), green «Закрыл оплату поставщику ✅», Back. + / − preset type Доход/Расход (st.ptype → ctx.ptype → recs[0].type).
-- «Thinking» emoji (owner 26.11): every owner message/button → bot sends premium emoji 5319172285762919855, deletes it after handling (handle() finally). Supplier button icon = owner checkmark 5465154027970908359.
+- «Thinking» emoji (owner 26.11): every owner message/button → bot sends premium emoji 5319172285762919855, not deleted (owner asked). Supplier button icon = owner checkmark 5465154027970908359.
