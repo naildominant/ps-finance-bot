@@ -70,4 +70,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - PS SHOP income: category NOT asked (owner 26.11); default «Продажа» (Категории row added) or detected group. Filtering by category — later stage.
 - Аренда screen (owner 26.11): «АРЕНДА ?» bold; [Предоплата (green)] [Залог (blue)]; Back. Preset type via pt:pre / pt:zal. «Залоги и брони» list button removed from this screen (asked owner where to put it).
 - Предоплата аренды (owner 26.11): pt:pre → amount buttons 50/100/150/200 тыс (pa:N) → card → booking date buttons → summary. Typing still works.
-- Booking date (owner 26.11): Сегодня/Завтра/Послезавтра/«Другая дата» all blue; «Другая дата» → month calendar (cl:YYYY-MM nav, cd:date pick); days with open bookings red with •, today blue, past days '·' (noop). kb() accepts 3rd elem = style. Calendar emoji for the prompt — waiting for owner.
+- Booking date (owner 26.11): Сегодня/Завтра/Послезавтра/«Другая дата» all blue; «Другая дата» → month calendar (cl:YYYY-MM nav, cd:date pick); days with open bookings red with •, today blue, past days '·' (noop). kb() accepts 3rd elem = style. Calendar emoji 5413879192267805083 in date prompts.

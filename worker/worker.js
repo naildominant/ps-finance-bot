@@ -295,7 +295,7 @@ async function askNext(ctx, cfg, st) {
   if (isOut(d.type) && !d.from) return void await askCard(ctx, cfg, st, 'from', '💳 С какой карты или наличными?');
   if (isIn(d.type) && !d.to) return void await askCard(ctx, cfg, st, 'to', '💳 На какую карту пришли деньги?');
   if (d.type === 'Предоплата' && !d.book) { st.await = 'book'; await putSt(ctx, st);
-    return void await send(ctx, '📅 На какую дату бронь? Нажмите кнопку или напишите, например, <code>28.11</code>.',
+    return void await send(ctx, '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>На какую дату бронь?</b>\nНажмите кнопку или напишите, например, <code>28.11</code>.',
       withBack([[['Сегодня', 'bd:0'], ['Завтра', 'bd:1'], ['Послезавтра', 'bd:2']], [['Другая дата', 'cl:' + todayYmd().slice(0, 7)]]])); }
   st.await = null; await putSt(ctx, st);
   await send(ctx, summary(d), [[['✅ Записать', 'ok'], ['❌ Отменить', 'no'], ['✏️ Правка', 'ed']], [BACK]]);
@@ -848,8 +848,8 @@ async function onCallback(ctx, q) {
   }
   if (k === 'k') { const c = cfg.cards[+v]; d[st.side] = c.name; await gone(ctx, mid); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
   if (k === 'cl' && d) {                            // календарь: открыть / листать месяц
-    const txt = '<b>📅 Выберите дату брони</b>\nКрасные дни • — уже есть бронь.';
-    return q.message.text && q.message.text.startsWith('📅 Выберите') ? edit(ctx, mid, txt, await calendar(ctx, v)) : (await gone(ctx, mid), send(ctx, txt, await calendar(ctx, v)));
+    const txt = '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>Выберите дату брони</b>\nКрасные дни • — уже есть бронь.';
+    return q.message.text && q.message.text.includes('Выберите дату брони') ? edit(ctx, mid, txt, await calendar(ctx, v)) : (await gone(ctx, mid), send(ctx, txt, await calendar(ctx, v)));
   }
   if (k === 'cd' && d) { d.book = v; await gone(ctx, mid); return reshow(ctx, st); }
   if (k === 'bd') { d.book = shiftYmd(todayYmd(), Number(v)); await gone(ctx, mid); return reshow(ctx, st); }
