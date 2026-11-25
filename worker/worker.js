@@ -146,7 +146,7 @@ async function aiParse(ctx, cfg, dir, text) {
 "card_from": карта или null, "card_to": карта или null, "date": "YYYY-MM-DD"|null, "book": дата брони для предоплаты "YYYY-MM-DD"|null}]}
 Правила: сумма числом ("50к"=50000, "1,5 млн"=1500000, "миллион 800"=1800000, "полтора миллиона"=1500000). "$", "долларов", "бакс" → currency "$".
 Направление: личные траты (еда, кафе, плов, аптека, квартира, такси, одежда) — Личное; продажа игр, подписок, аккаунтов, поставщик, OLX — PS SHOP; аренда приставок PS5 — Аренда PS5; сайты, Leadex — Leadex. ${dir ? 'Если операция одна — направление ' + dir + '.' : ''} Не ясно — null.
-"пришло", "получил", "заплатили мне", "взял за" — Доход. "потратил", "купил", "заплатил", "поели", "расход" — Расход. Перевод между своими картами, снял наличные — "Между своими". "предоплата", "бронь", "забронировал" — "Предоплата". "залог" — "Залог". "вложил", "вложение", "купил для Leadex технику в долг" — "Вложение". Не уверен — null.
+"пришло", "получил", "заплатили мне", "взял за" — Доход. В направлении Аренда PS5 "аренда 300к", "за аренду", "клиент заплатил" — Доход (категория Аренда / Оплата аренды), а расход аренды — только если сказано "потратил", "купил", "расход", "доставка", "реклама". "потратил", "купил", "заплатил", "поели", "расход" — Расход. Перевод между своими картами, снял наличные — "Между своими". "предоплата", "бронь", "забронировал" — "Предоплата". "залог" — "Залог". "вложил", "вложение", "купил для Leadex технику в долг" — "Вложение". Не уверен — null.
 Нет суммы — amount null. Не уверен в категории — null, НЕ угадывай. Для расхода карта — card_from, для дохода — card_to.
 Дата: "вчера", "позавчера", "25 ноября" → YYYY-MM-DD, не сказано → null.
 Категории по направлениям:
@@ -167,19 +167,43 @@ function matchCat(cfg, d, s) {
   return pool.find(c => `${c.group} / ${c.cat}`.toLowerCase() === s || c.cat.toLowerCase() === s)
       || pool.find(c => c.group === c.cat && c.group.toLowerCase() === s) || null;
 }
-// категория считается названной, если в тексте есть слово, похожее на слово из названия (первые 4 буквы)
-const SYN = { 'Продукты': ['продукт', 'еда', 'магазин', 'корзин', 'makro', 'макро', 'havas', 'хавас', 'молок', 'хлеб', 'сыр', 'яйц', 'мясо', 'овощ', 'фрукт'],
-  'Здоровье': ['аптек', 'лекарств', 'врач', 'стомат', 'зуб'], 'Красота': ['маникюр', 'ногт'], 'Квартира': ['квартир', 'аренд', 'коммун', 'свет', 'газ', 'интернет', 'связь'], 'Такси': ['такси', 'яндекс'] };
-// слова, общие с соседними категориями (например «Игры» у «Игры PS5» и «Игры PS4»), не считаются — нужно отличающее слово
-function said(text, c, pool) {
-  const t = text.toLowerCase().replace(/ё/g, 'е');
-  const W = x => (x.group + ' ' + x.cat).toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-я0-9]+/).filter(w => w.length >= 3 && w !== 'для');
-  const others = new Set((pool || []).filter(x => x.group !== c.group).flatMap(W));
-  const stem = w => w.slice(0, Math.min(5, Math.max(3, w.length - 2)));
-  if (W(c).every(w => t.includes(stem(w)))) return true;          // названы все слова категории («игра на ps4»)
-  const words = W(c).filter(w => !others.has(w));
-  const stems = words.map(w => w.slice(0, Math.min(5, Math.max(3, w.length - 2)))).concat(SYN[c.group] || []);
-  return stems.some(st => t.includes(st));
+// Категория считается названной, если в тексте есть слово, которое есть ТОЛЬКО у неё (не у соседних категорий),
+// либо синоним из SYN. Группа — если есть слово, которого нет у других групп. Тогда спросим подкатегорию.
+const SYN = {
+  'Еда': ['продукт', 'еда', 'магазин', 'корзин', 'makro', 'макро', 'havas', 'хавас', 'молок', 'хлеб', 'сыр', 'яйц', 'мясо', 'овощ', 'фрукт'],
+  'Бытовая химия': ['химия', 'порошок', 'мыло', 'шампун'],
+  'Аптека': ['аптек', 'лекарств'], 'Лечение зубов': ['стомат', 'зуб'], 'Маникюр': ['маникюр', 'ногт'],
+  'Такси': ['такси', 'яндекс'], 'Кафе': ['кафе', 'ресторан', 'плов', 'кофе', 'обед', 'ужин'],
+  'Оплата аренды': ['аренд', 'клиент заплатил'], 'Коммунальные': ['коммун', 'свет', 'газ', 'вода'],
+  'Домашний интернет': ['интернет'], 'Мобильная связь': ['связь', 'телефон', 'мобильн'],
+};
+const norm = t => ' ' + String(t).toLowerCase().replace(/ё/g, 'е') + ' ';
+const words = x => String(x).toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-я0-9]+/).filter(w => w.length >= 3 && w !== 'для');
+const stem = w => w.slice(0, Math.min(5, Math.max(3, w.length - 2)));
+function catSaid(text, c, pool) {
+  const t = norm(text);
+  if ((SYN[c.cat] || []).some(x => t.includes(x))) return true;
+  const own = words(c.group === c.cat ? c.cat : c.group + ' ' + c.cat);
+  const others = new Set(pool.filter(x => x !== c).flatMap(x => words(x.group + ' ' + x.cat)));
+  const uniq = own.filter(w => !others.has(w));
+  const full = ws => ws.length > 1 && ws.every(w => t.includes(stem(w)));
+  if (full(own)) return !pool.some(x => x !== c && full(words(x.group === x.cat ? x.cat : x.group + ' ' + x.cat)));   // «игра на ps4»
+  return uniq.some(w => t.includes(stem(w)));
+}
+function groupSaid(text, g, pool) {
+  const t = norm(text);
+  const others = new Set(pool.filter(x => x.group !== g).flatMap(x => words(x.group)));
+  return words(g).filter(w => !others.has(w)).some(w => t.includes(stem(w)));
+}
+// подобрать категорию: сначала ответ ИИ (если подтверждён словами), потом поиск по словам
+function detectCat(cfg, d, piece, aiCat) {
+  const pool = cfg.cats.filter(x => x.dir === d.dir && x.kind === d.type);
+  let c = aiCat ? matchCat(cfg, d, aiCat) : null; if (c && !catSaid(piece, c, pool)) c = null;
+  if (!c) { const hits = pool.filter(x => catSaid(piece, x, pool)); if (hits.length === 1) c = hits[0];
+    else if (new Set(hits.map(x => x.group)).size === 1 && hits.length) d.group = hits[0].group; }
+  if (!c && !d.group) { const gs = [...new Set(pool.map(x => x.group))].filter(g => groupSaid(piece, g, pool));
+    if (gs.length === 1) { const subs = pool.filter(x => x.group === gs[0]); if (subs.length === 1) c = subs[0]; else d.group = gs[0]; } }
+  if (c) { d.group = c.group; d.cat = c.cat; }
 }
 // карта, названная прямо в тексте: короткое имя, «нал/наличка/кэш», «доллары», 4 цифры
 function cardInText(cfg, text) {
@@ -264,7 +288,7 @@ async function askCard(ctx, cfg, st, side, q) {
   await send(ctx, q, withBack(chunk((list.length ? list : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [c.name, 'k:' + i]), 2)));
 }
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
-const dirMenu = ctx => send(ctx, 'Выберите направление записи:', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📋 Залоги и брони', 'zl'], ['🧮 Остаток карты', 'adj']], [['📊 Открыть таблицу', SHEET_URL]]]);
+const dirMenu = ctx => send(ctx, 'Выберите направление записи:', [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📋 Залоги и брони', 'zl'], ['🧮 Остаток карты', 'adj']], [['🧾 Закрыл оплату поставщику', 'sup']], [['📊 Открыть таблицу', SHEET_URL]]]);
 
 // ---------- Запись в таблицу ----------
 async function save(ctx, cfg, d) {
@@ -364,7 +388,8 @@ async function onTool(ctx, q) {
   if (k === 'pb') {
     const rid = await botRec(ctx, cfg, { dir: x.dir, type: 'Доход', group: x.dir === 'Аренда PS5' ? 'Аренда' : '', cat: 'Сгоревшая предоплата', amount: x.sum, comment: 'Сгорела предоплата ' + x.id });
     await setItem(ctx, x, 0, 'сгорела');
-    return edit(ctx, mid, `🔥 Предоплата ${x.id} сгорела: ${fmt(x.sum)} сум теперь доход (${rid}).`);
+    await edit(ctx, mid, `🔥 Предоплата ${x.id} сгорела: ${fmt(x.sum)} сум теперь доход (${rid}).`);
+    return x.dir === 'Аренда PS5' ? rentShare(ctx, cfg) : null;
   }
   if (k === 'pc') {
     await putSt(ctx, { tool: { kind: 'pc', id }, await: 'tool' });
@@ -384,13 +409,15 @@ async function finishPrepay(ctx, cfg, x, extra, card, mid) {
   await setItem(ctx, x, 0, 'подтверждено');
   await putSt(ctx, {});
   const t = `✅ ${x.id} подтверждено: предоплата ${fmt(x.sum)}${extra ? ` + доплата ${fmt(extra)} на «${card}»` : ''} = доход ${fmt(x.sum + extra)} сум (${a}${b ? ', ' + b : ''}).`;
-  return mid ? edit(ctx, mid, t) : send(ctx, t);
+  await (mid ? edit(ctx, mid, t) : send(ctx, t));
+  if (x.dir === 'Аренда PS5') await rentShare(ctx, cfg);
 }
 // ответы числом на вопросы инструментов
 async function onToolText(ctx, cfg, st, text) {
   const a = parseAmount(text);
   if (!a) return send(ctx, 'Не понял число. Напишите, например, <code>150000</code>.');
   const t = st.tool;
+  if (t.kind === 'sup') return supplierDone(ctx, cfg, t.card, a.amount);
   if (t.kind === 'interest') {          // 1-е число: проценты по UZUM вкладу → доход PS SHOP
     const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
     const r = g.values.find(r => String(r[0]) === t.card); const now = Number(r && r[8]) || 0;
@@ -421,8 +448,9 @@ async function onToolText(ctx, cfg, st, text) {
     const left = x.sum - a.amount;
     await setItem(ctx, x, left, left > 0 ? 'открыт' : 'закрыт');
     await putSt(ctx, {});
-    return send(ctx, `✅ ${fmt(a.amount)} сум из залога ${x.id} — доход аренды (${rid}). Осталось залога: ${fmt(left)}.`,
+    await send(ctx, `✅ ${fmt(a.amount)} сум из залога ${x.id} — доход аренды (${rid}). Осталось залога: ${fmt(left)}.`,
       left > 0 ? [[['↩️ Остаток вернул клиенту', 'zr:' + x.id]]] : null);
+    return x.dir === 'Аренда PS5' ? rentShare(ctx, cfg) : null;
   }
   if (t.kind === 'pc') {
     if (!a.amount) return finishPrepay(ctx, cfg, x, 0, null);
@@ -489,6 +517,93 @@ async function onLeadex(ctx, q) {
   return edit(ctx, mid, `✅ Отмечено. ${recs.length ? 'Записал: ' + recs.join(', ') + '. ' : ''}Таблица «Доли» обновлена.`);
 }
 
+
+// ---------- Журнал целиком (для расчётов долей) ----------
+async function journal(ctx) {
+  const [j] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: 'A2:P3000' }]);
+  return j.values.filter(r => r[0] && r[12] !== 'удалено').map(r => ({ id: r[0], t: r[1] && r[1].d || 0, dir: r[3], type: r[4], group: r[5], cat: r[6], uzs: Number(r[7]) || 0, from: r[10], to: r[11] }));
+}
+const cardByWord = (cfg, w) => cfg.cards.find(c => c.name.toLowerCase().startsWith(w.toLowerCase()));
+
+// ---------- PS SHOP: «закрыл оплату» → поставщик, чистая прибыль, 80/20 ----------
+async function closeSupplier(ctx, cfg) {
+  const sup = cardByWord(cfg, 'Поставщик');
+  await putSt(ctx, { tool: { kind: 'sup', card: sup.name }, await: 'tool' });
+  return send(ctx, `🧾 Закрыли оплату поставщику. Сколько <b>осталось</b> на «${sup.name}»? Напишите число из приложения банка.`, withBack());
+}
+async function supplierDone(ctx, cfg, card, left) {
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+  const r = g.values.find(r => String(r[0]) === card); const before = Number(r && r[8]) || 0;
+  const paid = Math.round(before - left);
+  await putSt(ctx, {});
+  if (paid <= 0) return send(ctx, `По записям на «${card}» было ${fmt(before)}, вы пишете ${fmt(left)}. Оплаты не видно. Если остаток по записям неверный, поправьте его кнопкой «🧮 Остаток карты».`);
+  const sid = await botRec(ctx, cfg, { dir: 'PS SHOP', type: 'Расход', group: 'Поставщик', cat: 'Поставщик', amount: paid, from: card, comment: `Оплата поставщику: было ${fmt(before)}, осталось ${fmt(left)}` });
+  const last = (await store(ctx, { op: 'get', k: 'psLast' })) || 0;
+  const J = (await journal(ctx)).filter(x => x.t > last || x.id === sid);
+  const rasx = cardByWord(cfg, 'Расходка');
+  const income = J.filter(x => x.dir === 'PS SHOP' && x.type === 'Доход' && x.cat !== 'Проценты по вкладу').reduce((a, x) => a + x.uzs, 0);
+  const supPaid = J.filter(x => x.dir === 'PS SHOP' && x.type === 'Расход' && x.cat === 'Поставщик').reduce((a, x) => a + x.uzs, 0);
+  const toExp = J.filter(x => x.type === 'Между своими' && rasx && x.to === rasx.name).reduce((a, x) => a + x.uzs, 0);
+  const net = income - supPaid - toExp;
+  const L = [`🧾 Записал расход «Поставщик»: <b>${fmt(paid)}</b> сум (${sid}).`, '',
+    `<b>Чистая прибыль PS SHOP с прошлого расчёта:</b>`, `поступления ${fmt(income)} − поставщику ${fmt(supPaid)} − на Расходку ${fmt(toExp)} = <b>${fmt(net)}</b>`];
+  if (!ctx.dry) await store(ctx, { op: 'put', k: 'psLast', v: Date.now() });
+  if (net <= 0) { L.push('', 'Прибыли нет — доли не начисляю.');
+    return send(ctx, L.join('\n')); }
+  const mine = Math.round(net * 0.8), res = net - mine;
+  const nid = await botRec(ctx, cfg, { dir: 'Личное', type: 'Доход', group: 'Доля из PS SHOP (80%)', cat: 'Доля из PS SHOP (80%)', amount: mine, comment: 'Доля 80% по расчёту ' + sid });
+  await gas(ctx, [{ op: 'set', sheet: 'Доли', range: 'K5:Q5', values: [['PS SHOP: дата', 'Поступления', 'Поставщику', 'На Расходку', 'Чистая прибыль', 'Наилю 80%', 'Резерв 20%']] },
+    { op: 'append', sheet: 'Доли', row: ['', '', '', '', '', '', '', '', '', '', { d: Date.now() }, income, supPaid, toExp, net, mine, res] }]);
+  await store(ctx, { op: 'put', k: 'res:' + sid, v: { amount: res } });
+  L.push('', `• Вам 80%: <b>${fmt(mine)}</b> — записал в «Личное» (${nid})`, `• В резерв 20%: <b>${fmt(res)}</b> → переведите на «UZUM вклад»`);
+  return send(ctx, L.join('\n'), [[['✅ Перевёл в резерв', 'rsv:' + sid], ['Позже', 'rsvl:' + sid]]]);
+}
+
+// ---------- Аренда: доля брата 60% после каждой сделки ----------
+async function rentShare(ctx, cfg) {
+  const J = await journal(ctx);
+  const ars = cardByWord(cfg, 'Арс');
+  const inc = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Доход').reduce((a, x) => a + x.uzs, 0);
+  const exp = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Расход').reduce((a, x) => a + x.uzs, 0);
+  const profit = inc - exp;
+  const paid = ars ? J.filter(x => x.type === 'Между своими' && x.to === ars.name).reduce((a, x) => a + x.uzs, 0) : 0;
+  const mineDone = J.filter(x => x.dir === 'Личное' && x.cat === 'Доля из аренды (40%)').reduce((a, x) => a + x.uzs, 0);
+  const mineAdd = Math.round(profit * 0.4 - mineDone);
+  let nid = '';
+  if (mineAdd > 0) nid = await botRec(ctx, cfg, { dir: 'Личное', type: 'Доход', group: 'Доля из аренды (40%)', cat: 'Доля из аренды (40%)', amount: mineAdd, comment: 'Доля 40% аренды' });
+  const due = Math.round(profit * 0.6 - paid);
+  const L = [`🎮 <b>Аренда PS5, за всё время:</b> доходы ${fmt(inc)} − расходы ${fmt(exp)} = прибыль <b>${fmt(profit)}</b>`,
+    `Доля брата 60%: ${fmt(Math.round(profit * 0.6))}, уже переведено: ${fmt(paid)}`,
+    `👉 <b>К переводу брату: ${fmt(Math.max(0, due))}</b>`];
+  if (nid) L.push(`Ваша доля 40%: +${fmt(mineAdd)} записал в «Личное» (${nid})`);
+  if (due <= 0) return send(ctx, L.join('\n'));
+  await store(ctx, { op: 'put', k: 'bro', v: { amount: due } });
+  return send(ctx, L.join('\n'), [[['✅ Перевёл брату', 'bro:'], ['Позже', 'brol:']]]);
+}
+// кнопки: перевёл в резерв / брату → с какой карты
+async function onShares(ctx, q) {
+  const cfg = await config(ctx); const [k, id] = q.data.split(':'); const mid = q.message.message_id;
+  await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
+  if (k === 'rsvl' || k === 'brol') return edit(ctx, mid, 'Хорошо, позже. Кнопка остаётся.', [[['✅ Перевёл', k === 'rsvl' ? 'rsv:' + id : 'bro:']]]);
+  if (k === 'rsv' || k === 'bro') {
+    const tgt = k === 'rsv' ? cfg.cards.find(c => /вклад/i.test(c.name)) : cardByWord(cfg, 'Арс');
+    const amt = k === 'rsv' ? ((await store(ctx, { op: 'get', k: 'res:' + id })) || {}).amount : ((await store(ctx, { op: 'get', k: 'bro' })) || {}).amount;
+    if (!amt || !tgt) return edit(ctx, mid, 'Сумма не найдена или уже записана.');
+    const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.name !== tgt.name && c.cur === 'сум');
+    return edit(ctx, mid, `С какой карты перевели ${fmt(amt)} на «${tgt.name}»?`, chunk(list.map(({ c, i }) => [c.name, `${k}f:${id}|${i}`]), 2));
+  }
+  if (k === 'rsvf' || k === 'brof') {
+    const [iid, ci] = id.split('|'); const src = cfg.cards[+ci];
+    const tgt = k === 'rsvf' ? cfg.cards.find(c => /вклад/i.test(c.name)) : cardByWord(cfg, 'Арс');
+    const key = k === 'rsvf' ? 'res:' + iid : 'bro'; const it = await store(ctx, { op: 'get', k: key });
+    if (!it || !it.amount) return edit(ctx, mid, 'Уже записано.');
+    const rid = await botRec(ctx, cfg, { dir: k === 'rsvf' ? 'PS SHOP' : 'Аренда PS5', type: 'Между своими', amount: it.amount, from: src.name, to: tgt.name,
+      comment: k === 'rsvf' ? 'Резерв 20% PS SHOP' : 'Доля брата 60% аренды' });
+    await store(ctx, { op: 'put', k: key, v: { amount: 0 } });
+    return edit(ctx, mid, `✅ Записал перевод ${fmt(it.amount)}: «${src.name}» → «${tgt.name}» (${rid}).`);
+  }
+}
+
 // ---------- Обработка ----------
 async function onMessage(ctx, m) {
   const cfg = await config(ctx);
@@ -515,6 +630,7 @@ async function onMessage(ctx, m) {
   if (m.document) return send(ctx, 'Этот файл я не читаю. Пришлите фото, голосовое или текст.');
   if (!text) return;
   if (st.await === 'tool' && st.tool) return onToolText(ctx, cfg, st, text);
+  if (/закрыл[а-я]*\s+(оплат|поставщ)/i.test(text)) return closeSupplier(ctx, cfg);
   if (st.await === 'amount' && st.d) {
     const a = parseAmount(text); if (a) remember(st);
     if (!a) return send(ctx, 'Не понял сумму. Напишите только число, например <code>150000</code> или <code>$50</code>.');
@@ -549,13 +665,7 @@ function draftFrom(cfg, dir, p, text, single) {
   fixType(d);
   if (d.type === 'Предоплата' && p.book) { d.book = parseDate(p.book); if (d.date === d.book) d.date = todayYmd(); }  // дата операции ≠ дата брони
   if (d.amount == null && single) { const a = parseAmount((text.match(/\$?\d[\d\s.,]*\s*(к|тыс|млн|\$)?/i) || [''])[0]); if (a && a.amount) { d.amount = a.amount; if (a.cur) d.cur = a.cur; } }
-  if (d.type && d.dir) {
-    const pool = cfg.cats.filter(x => x.dir === d.dir && x.kind === d.type);
-    let c = matchCat(cfg, d, p.category); if (c && !said(piece, c, pool)) c = null;
-    if (!c) { const hits = pool.filter(x => said(piece, x, pool)); if (hits.length === 1) c = hits[0];   // ИИ не назвал — ищем по словам
-      else if (hits.length > 1 && new Set(hits.map(x => x.group)).size === 1) { d.group = hits[0].group; } }
-    if (c) { d.group = c.group; d.cat = c.cat; }
-  }
+  if (d.type && d.dir && needsCat(d.type)) detectCat(cfg, d, piece, p.category);
   const ok = c => c && (isIn(d.type) ? c.inc.includes(d.dir) : isOut(d.type) ? c.exp.includes(d.dir) : true) ? c.name : null;
   let cf = matchCard(cfg, p.card_from), ct = matchCard(cfg, p.card_to);
   if (!cf && !ct && d.type !== 'Между своими') cf = ct = cardInText(cfg, piece);
@@ -571,10 +681,7 @@ function refill(cfg, d) {
   fixType(d);
   if (!d.type) return;
   if (!needsCat(d.type)) { const c = cardInText(cfg, d.comment); if (c && isOut(d.type) && !d.from) d.from = c.name; if (c && isIn(d.type) && !d.to) d.to = c.name; return; }
-  const pool = cfg.cats.filter(x => x.dir === d.dir && x.kind === d.type);
-  if (!d.cat) { const hits = pool.filter(x => said(d.comment, x, pool));
-    if (hits.length === 1) { d.group = hits[0].group; d.cat = hits[0].cat; }
-    else if (hits.length > 1 && new Set(hits.map(x => x.group)).size === 1) d.group = hits[0].group; }
+  if (!d.cat) detectCat(cfg, d, d.comment, null);
   const c = cardInText(cfg, d.comment);
   if (c && isOut(d.type) && !d.from && c.exp.includes(d.dir)) d.from = c.name;
   if (c && isIn(d.type) && !d.to && c.inc.includes(d.dir)) d.to = c.name;
@@ -643,6 +750,7 @@ async function onCallback(ctx, q) {
     try {
       const id = await save(ctx, cfg, d);
       await edit(ctx, mid, `✅ Записано · ${id}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
+      if (!d.edit && d.dir === 'Аренда PS5' && (d.type === 'Доход' || d.type === 'Расход')) await rentShare(ctx, cfg);
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
         const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
         await leadexSplit(ctx, cfg, id, uzs);
@@ -708,6 +816,8 @@ async function handle(ctx, upd) {
   if (q && q.message) { ctx.orig = q.message.text || ''; ctx.origMid = q.message.message_id; }
   try {
     if (q && /^lx(ok|no):/.test(q.data)) return await onLeadex(ctx, q);
+    if (q && /^(rsv|rsvl|bro|brol|rsvf|brof):/.test(q.data)) return await onShares(ctx, q);
+    if (q && q.data === 'sup') { await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id }); await edit(ctx, q.message.message_id, '🧾 Закрыл оплату'); return await closeSupplier(ctx, await config(ctx)); }
     if (q && /^(zl|adj|aj|zr|zry|zp|zk|pc|pb|p0|pk)(:|$)/.test(q.data)) return await onTool(ctx, q);
     if (q) return /^(rm|rmy|rmn|fx):/.test(q.data) ? await onSavedButton(ctx, q) : await onCallback(ctx, q);
     return await onMessage(ctx, m);
