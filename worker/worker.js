@@ -632,7 +632,8 @@ async function onMessage(ctx, m) {
   const cfg = await config(ctx);
   const text = (m.text || '').trim();
   let st = await getSt(ctx);
-  const ce = (m.entities || []).filter(e => e.type === 'custom_emoji');   // id премиум-эмодзи владельца (для меню)
+  const ce = (m.entities || []).filter(e => e.type === 'custom_emoji');
+  if (m.sticker && m.sticker.custom_emoji_id) ce.push({ custom_emoji_id: m.sticker.custom_emoji_id });   // id премиум-эмодзи владельца (для меню)
   if (ce.length && !ctx.dry) for (const e of ce) await ctx.env.KV.put('ce:' + e.custom_emoji_id, JSON.stringify({ text, at: Date.now() }));
   if (ce.length && !text.replace(/[\s\u{FE0F}\u{200D}\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{2B05}-\u{2B07}\u{2190}-\u{21FF}]/gu, '')) return send(ctx, 'Эмодзи запомнил 👌');
   if (text === '/start' || text === '/menu' || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
@@ -833,6 +834,9 @@ async function onSavedButton(ctx, q) {
 
 async function handle(ctx, upd) {
   const m = upd.message, q = upd.callback_query;
+  if (!ctx.dry && m) {                                   // последние 10 сообщений (для разбора: эмодзи, стикеры)
+    const l = (await ctx.env.KV.get('last', 'json')) || []; l.unshift({ at: Date.now(), m }); await ctx.env.KV.put('last', JSON.stringify(l.slice(0, 10)));
+  }
   const from = (m && m.from) || (q && q.from); if (!from) return;
   ctx.chat = (m && m.chat.id) || (q && q.message.chat.id);
   const cfg = await config(ctx);
@@ -883,6 +887,7 @@ export default {
     if (u.pathname === '/tgcall' && req.method === 'POST') {  // служебное: прямой вызов Telegram (проверка эмодзи и т. п.)
       const b = await req.json(); return Response.json(await tg({ env }, b.method, b.body));
     }
+    if (u.pathname === '/last') return new Response(await env.KV.get('last') || '[]', { headers: { 'content-type': 'application/json' } });
     if (u.pathname === '/ce') {
       const l = await env.KV.list({ prefix: 'ce:' }); const out = {};
       for (const k of l.keys) out[k.name.slice(3)] = JSON.parse(await env.KV.get(k.name));
