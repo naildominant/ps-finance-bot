@@ -21,7 +21,7 @@ async function tg(ctx, method, body) {
 const ICON = { '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
   'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['Leadex', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
 // цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
-const STYLE = { 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger' };
+const STYLE = { 'Закрыл оплату поставщику ✅': 'success', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger' };
 const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data]) => {
   const b = ICON[text] ? { text: ICON[text][0], icon_custom_emoji_id: ICON[text][1] } : { text };
   if (STYLE[text]) b.style = STYLE[text];
@@ -748,7 +748,9 @@ async function onCallback(ctx, q) {
     await edit(ctx, mid, '🏢 ' + dir);
     if (st.pending) return startDraft(ctx, cfg, dir, st.pending);
     await putSt(ctx, { dir });
-    const extra = dir === 'PS SHOP' ? [[['🧾 Закрыл оплату поставщику', 'sup']]] : dir === 'Аренда PS5' ? [[['📋 Залоги и брони', 'zl']]] : undefined;
+    const extra = dir === 'PS SHOP' ? [[['Закрыл оплату поставщику ✅', 'sup']]] : dir === 'Аренда PS5' ? [[['📋 Залоги и брони', 'zl']]] : undefined;
+    const E = id => `<tg-emoji emoji-id="${id}">🅰️</tg-emoji>`;      // плюс / минус — премиум-эмодзи владельца
+    if (dir === 'PS SHOP') return send(ctx, `<b>PS SHOP ${E('5442846010785151030')} или ${E('5442918359509251481')} ?</b>`, extra);
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
   if (k === 'bk' && st.tool) { await edit(ctx, mid, '<tg-emoji emoji-id="5215261582170278752">⬅️</tg-emoji>'); await putSt(ctx, {}); return dirMenu(ctx); }
