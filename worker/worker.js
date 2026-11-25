@@ -20,8 +20,11 @@ async function tg(ctx, method, body) {
 // премиум-эмодзи владельца на кнопках: подпись → [текст, id эмодзи] («Назад» — только красная стрелка)
 const ICON = { '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
   'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['Leadex', '5462890550141148589'], 'Личное': ['Личное', '4943195336911881191'] };
+// цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
+const STYLE = { 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger' };
 const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data]) => {
   const b = ICON[text] ? { text: ICON[text][0], icon_custom_emoji_id: ICON[text][1] } : { text };
+  if (STYLE[text]) b.style = STYLE[text];
   return /^https?:/.test(data) ? { ...b, url: data } : { ...b, callback_data: data }; })) });
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU/edit';
 const send = (ctx, text, rows) => tg(ctx, 'sendMessage', { chat_id: ctx.chat, text, parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
