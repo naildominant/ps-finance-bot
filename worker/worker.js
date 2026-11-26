@@ -174,15 +174,25 @@ async function readHps(ctx, bytes) {
   const rub = num(j.rub), usdt = num(j.usdt);
   return rub > 0 ? { rub, usdt: usdt > 0 ? usdt : null } : null;
 }
+// рубли за одну заявку PS SHOP → прибавить к долгу поставщику
+async function addSupRub(ctx, rub) {
+  const x = (await store(ctx, { op: 'get', k: 'supDebt' })) || { rub: 0, uzs: 0 };
+  const add = Math.round(rub * RUB_TO_UZS);
+  const v = { rub: Math.round(((x.rub || 0) + rub) * 100) / 100, usdt: null, uzs: (x.uzs || 0) + add, at: Date.now() };
+  if (!ctx.dry) { await store(ctx, { op: 'put', k: 'supDebt', v }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); }
+  await putSt(ctx, {});
+  ctx.noTrack = true;
+  await send(ctx, `🧾 Поставщику: +${fmt(add)} сум (${String(rub).replace('.', ',')} RUB × ${RUB_TO_UZS})\n<b>Долг поставщику всего: ${fmt(v.uzs)} сум</b>`);
+  await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx);
+}
 // сохранить долг поставщику и показать СТАРТ
 async function setSupDebt(ctx, h) {
   const uzs = Math.round(h.rub * RUB_TO_UZS);
-  if (!ctx.dry) await store(ctx, { op: 'put', k: 'supDebt', v: { ...h, uzs, at: Date.now() } });
+  if (!ctx.dry) { await store(ctx, { op: 'put', k: 'supDebt', v: { ...h, uzs, at: Date.now() } }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); }
   await putSt(ctx, {});
-  const usd = uzs / ((await cbuRate(ctx, todayYmd())) || 12000);
   ctx.noTrack = true;
   await send(ctx, `🧾 <b>Долг поставщику: ${fmt(uzs)} сум</b>\n${h.usdt ? String(h.usdt).replace('.', ',') + ' USDT ≈ ' : ''}${String(h.rub).replace('.', ',')} RUB × ${RUB_TO_UZS}` +
-    (usd > SUP_LIMIT_USD ? '\nБольше $120 — кнопка долга будет на СТАРТ.' : '\nМеньше $120 — пока не напоминаю.'));
+    '\nОбщий долг обновлён, кнопка висит на СТАРТ.');
   ctx.noTrack = false; return startScreen(ctx);
 }
 
@@ -749,6 +759,10 @@ async function onMessage(ctx, m) {
   }
   if (m.document) return send(ctx, 'Этот файл я не читаю. Пришлите фото, голосовое или текст.');
   if (!text) return;
+  if (st.await === 'tool' && st.tool && st.tool.kind === 'hpsadd') {   // рубли за заявку
+    const r = num(text.replace(/руб[а-я.]*|₽|rub/ig, ''));
+    return r > 0 ? addSupRub(ctx, r) : send(ctx, 'Не понял сумму. Напишите рубли числом, например <code>1929</code>.');
+  }
   { const h = parseHps(text); if (h) return setSupDebt(ctx, h); }   // пересланный ответ HPS на /report
   { const r = text.match(/^(?:долг\s*(?:поставщику)?\s*)?([\d\s.,]+)\s*(?:руб[а-я.]*|₽|rub)$/i);   // «4607 руб», «долг 4 607,72 ₽»
     if (r || (st.await === 'tool' && st.tool && st.tool.kind === 'hps' && num(text) > 0)) return setSupDebt(ctx, { rub: num(r ? r[1] : text), usdt: null }); }
@@ -1034,9 +1048,7 @@ function parseHps(text) {
 }
 async function supDue(ctx) {
   const x = await store(ctx, { op: 'get', k: 'supDebt' });
-  if (!x || !x.uzs) return 0;
-  const usd = x.usdt || x.uzs / ((await cbuRate(ctx, todayYmd())) || 12000);
-  return usd > SUP_LIMIT_USD ? x.uzs : 0;
+  return x && x.uzs > 0 ? x.uzs : 0;                     // лимит $120 убран (владелец 26.11) — долг виден всегда
 }
 async function supReminder(env) {
   const ctx = { env, out: [] }; const cfg = await config(ctx, true);
@@ -1049,7 +1061,9 @@ async function startScreen(ctx) {
   const cfg = await config(ctx);
   const rows = [[['СТАРТ', 'menu']]];
   const b = await rentDue(ctx, cfg); if (b > 0) rows.push([[`👤 Долг брату: ${fmt(b)}`, 'dbro']]);
-  const p = await supDue(ctx); if (p > 0) rows.push([[`🧾 Долг поставщику: ${fmt(p)}`, 'dsup']]);
+  const p = await supDue(ctx);
+  if (p > 0) rows.push([[`🧾 Долг поставщику: ${fmt(p)}`, 'dsup']]);
+  else if (await store(ctx, { op: 'get', k: 'supUnknown' })) rows.push([['🧾 Поставщик: есть долг', 'dsup']]);
   return send(ctx, PAD(9) + '👇' + PAD(9), rows);
 }
 async function onCallback(ctx, q, again) {
@@ -1069,7 +1083,13 @@ async function onCallback(ctx, q, again) {
     return send(ctx, hint, [[BACK]]);
   }
   if (k === 'menu') { await gone(ctx, mid); return dirMenu(ctx); }
-  if (k === 'supd') { await gone(ctx, mid); await store(ctx, { op: 'put', k: 'supDebt', v: null }); return closeSupplier(ctx, cfg); }   // долг погашен до следующего /report
+  if (k === 'supd') { await gone(ctx, mid); await store(ctx, { op: 'put', k: 'supDebt', v: null }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); return closeSupplier(ctx, cfg); }   // долг погашен до следующего /report
+  if (k === 'sp') {                                  // после заявки PS SHOP: сколько рублей ушло поставщику
+    await tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } });
+    if (v === 'later') { await store(ctx, { op: 'put', k: 'supUnknown', v: true }); await putSt(ctx, {}); return startScreen(ctx); }
+    await putSt(ctx, { tool: { kind: 'hpsadd' }, await: 'tool' });
+    return send(ctx, '🧾 Сколько <b>рублей</b> ушло поставщику на эту заявку? Например <code>1929</code>.', [[BACK]]);
+  }
   if (k === 'st0') { await gone(ctx, mid); return startScreen(ctx); }
   if (k === 'dbro') {
     await gone(ctx, mid); const due = await rentDue(ctx, cfg);
@@ -1079,8 +1099,8 @@ async function onCallback(ctx, q, again) {
   }
   if (k === 'dsup') {
     await gone(ctx, mid); const due = await supDue(ctx);
-    if (due <= 0) return startScreen(ctx);
-    return send(ctx, `🧾 <b>Долг поставщику: ${fmt(due)} сум</b>\nОплатили поставщику?`, [[['✅ Оплатил', 'supd'], ['Позже', 'st0']]]);
+    return send(ctx, due > 0 ? `🧾 <b>Долг поставщику: ${fmt(due)} сум</b>` : '🧾 <b>Поставщику есть долг</b>, сумма не записана.',
+      [[['✍️ Добавить рубли', 'sp:rub']], [['✅ Оплатил', 'supd'], ['Позже', 'st0']]]);
   }
   if (k === 'mr') { await gone(ctx, mid); await putSt(ctx, {}); return monthReport(ctx, v); }
   if (k === 'ro' || k === 'rp') {                    // выбран клиент / приставка нового клиента
@@ -1205,6 +1225,10 @@ async function onCallback(ctx, q, again) {
         await store(ctx, { op: 'put', k: 'pendShare', v: false }); await store(ctx, { op: 'put', k: 'pendDone', v: null });
         if (await rentShare(ctx, cfg)) { ctx.noTrack = false; await putSt(ctx, {}); return; }
         mark = 'Доход';
+      }
+      if (!d.edit && d.dir === 'PS SHOP' && d.type === 'Доход' && d.cat !== 'Проценты по вкладу' && !(st.queue && st.queue.length)) {
+        await send(ctx, '🧾 <b>Поставщику?</b> Сколько рублей ушло на эту заявку.', [[['✍️ Поставщику', 'sp:rub'], ['Позже', 'sp:later']]]);
+        ctx.noTrack = false; await putSt(ctx, {}); return;     // ждём ответ (как с братом)
       }
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
         const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
