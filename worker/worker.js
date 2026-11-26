@@ -364,7 +364,7 @@ async function doneMark(ctx, type) {
 }
 const TEST_WIPE = true;                                   // /start стирает чат — только на время теста (выключить на запуске)
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
-const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['📄 Открыть таблицу', SHEET_URL]]]); };
+const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };   // долги и «Назад» → СТАРТ (владелец 26.11)
 
 // ---------- Запись в таблицу ----------
 async function save(ctx, cfg, d) {
@@ -1070,14 +1070,19 @@ async function supReminder(env) {
   const st = await getSt(ctx); if (!st.d) await putSt(ctx, { tool: { kind: 'hps' }, await: 'tool' });   // ждём рубли, скрин или пересылку
   await send(ctx, '🧾 <b>23:03 — проверим долг поставщику</b>\nНапишите <code>/report</code> в группе «PSSHOP x HPS», потом пришлите сюда:\n• сумму в рублях, например <code>4607</code>\n• или скрин ответа\n• или перешлите ответ.\nЯ умножу рубли на 202.', [[['Позже', 'st0']]]);
 }
-async function startScreen(ctx) {
-  await purge(ctx); await putSt(ctx, {});
-  const cfg = await config(ctx);
-  const rows = [[['СТАРТ', 'menu']]];
+async function debtRows(ctx, cfg) {                         // кнопки долгов — на СТАРТ и в главном меню
+  cfg = cfg || await config(ctx); const rows = [];
   const b = await rentDue(ctx, cfg); if (b > 0) rows.push([[`👤 Долг брату: ${fmt(b)}`, 'dbro']]);
   const p = await supDue(ctx);
   if (p > 0) rows.push([[`🧾 Долг поставщику: ${fmt(p)}`, 'dsup']]);
   else if (await store(ctx, { op: 'get', k: 'supUnknown' })) rows.push([['🧾 Поставщик: есть долг', 'dsup']]);
+  return rows;
+}
+async function startScreen(ctx) {
+  await purge(ctx); await putSt(ctx, {});
+  const cfg = await config(ctx);
+  const rows = [[['СТАРТ', 'menu']]];
+  rows.push(...await debtRows(ctx, cfg));
   return send(ctx, PAD(9) + '👇' + PAD(9), rows);
 }
 async function onCallback(ctx, q, again) {
