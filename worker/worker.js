@@ -391,6 +391,9 @@ const GOAL_SUM = 14000000, GOAL_DATE = '06.01.2027';
 const PS_RESERVE = 0;                                      // резерв PS SHOP: пока 0% — вся прибыль владельцу (26.11; было 20%)
 // служебные категории — не на кнопках (бот ставит их сам): оплата поставщику, доход по умолчанию, проценты
 const HIDDEN_GROUPS = ['Поставщик', 'Продажа', 'Проценты по вкладу'];
+// цвета кнопок категорий (владелец 27.11: «чтобы не смешивались») — соседние разные
+const CAT_STYLE = { 'Игры PS4': 'primary', 'Подписка': 'success', 'GTA 6': 'danger', 'Чистка PlayStation': 'primary', 'Аксессуары': 'success', 'Консоль': 'danger', 'Игры PS5': 'primary',
+  'OLX': 'success', 'Instagram': 'danger', 'Telegram': 'primary', 'Непредвиденные': 'danger' };
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
 const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };   // долги и «Назад» → СТАРТ (владелец 26.11)
 
@@ -1150,7 +1153,10 @@ async function onCallback(ctx, q, again) {
     if (v === 'pre') return send(ctx, '<b>Сколько предоплата?</b>', [[['50 000', 'pa:50000'], ['100 000', 'pa:100000']], [['150 000', 'pa:150000'], ['200 000', 'pa:200000']], [BACK]]);
     if (T === 'Доход' || T === 'Расход') {               // сразу кнопки категорий: можно нажать или сказать голосом (владелец 27.11)
       const gs = [...new Set(cfg.cats.filter(c => c.dir === dir && c.kind === T && !HIDDEN_GROUPS.includes(c.group)).map(c => c.group))];
-      return send(ctx, `${T === 'Доход' ? '➕' : '➖'} <b>${T}: выберите категорию</b> или напишите / скажите голосом, например ${T === 'Доход' ? '«игра PS5 450 000 на Главную»' : '«OLX 50 000 с Расходки»'}.`, [...chunk(gs.map((g, i) => [g, 'pg:' + i]), 2), [BACK]]);
+      const btn = (g, i) => [g, 'pg:' + i, CAT_STYLE[g]];
+      let rows = chunk(gs.map(btn).filter(b => b[0] !== 'Игры PS5'), 2);   // «Игры PS5» — большая кнопка в самом низу (владелец 27.11)
+      const ps5 = gs.indexOf('Игры PS5'); if (ps5 >= 0) rows.push([btn('Игры PS5', ps5)]);
+      return send(ctx, `<b>${T === 'Доход' ? '➕ Доход' : '➖ Расход'}</b>`, [...rows, [BACK]]);
     }
     return send(ctx, hint, [[BACK]]);
   }
