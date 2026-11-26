@@ -243,6 +243,8 @@ const SYN = {
   'Такси': ['такси', 'яндекс'], 'Кафе': ['кафе', 'ресторан', 'плов', 'кофе', 'обед', 'ужин'],
   'Оплата аренды': ['аренд', 'клиент заплатил'], 'Коммунальные': ['коммун', 'свет', 'газ', 'вода'],
   'Домашний интернет': ['интернет'], 'Мобильная связь': ['связь', 'телефон', 'мобильн'],
+  'OLX': ['olx', 'олх', 'олкс'], 'Instagram': ['instagram', 'инстаграм', 'инста', 'insta'], 'Telegram': ['telegram', 'телеграм', 'телега', ' тг '],
+  'Claude': ['claude', 'клод'], 'Непредвиденные': ['непредвиден'],
 };
 const norm = t => ' ' + String(t).toLowerCase().replace(/ё/g, 'е') + ' ';
 const words = x => String(x).toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-я0-9]+/).filter(w => w.length >= 3 && w !== 'для');
@@ -309,7 +311,7 @@ function summary(d) {
   L.push(`🏢 ${d.dir}`);
   L.push(`🔄 ${d.type || '—'}`);
   L.push(`💰 ${d.amount != null ? (d.cur === '$' ? '$' + d.amount : fmt(d.amount) + ' сум') : '—'}`);
-  if (needsCat(d.type)) L.push(`🏷 ${d.cat ? (d.group === d.cat ? d.cat : d.group + ' / ' + d.cat) : '—'}`);
+  if (needsCat(d.type)) L.push(`🏷 ${d.cat ? (d.group === d.cat || String(d.cat).startsWith(d.group) ? d.cat : d.group + ' / ' + d.cat) : '—'}`);
   if (d.type === 'Между своими') L.push(`💳 ${d.from || '—'} → ${d.to || '—'}`);
   else L.push(`💳 ${(isOut(d.type) ? d.from : d.to) || '—'}`);
   if (d.type === 'Предоплата') L.push(`🗓 Бронь на ${d.book ? human(d.book) : '—'}`);
@@ -336,6 +338,10 @@ async function askNext(ctx, cfg, st) {
     if (subs.length) { st.await = null; await putSt(ctx, st); return void await send(ctx, `🏷 ${d.group}: что именно?`, withBack(chunk(subs.map((c, i) => [c.cat, 's:' + i]), 2))); }
   }
   if (needsCat(d.type) && !d.cat) return void await askGroup(ctx, cfg, st);
+  if (d.group === 'Непредвиденные' && !/\(.+\)/.test(d.cat || '')) {   // пометка обязательна (владелец 27.11)
+    st.await = 'note'; await putSt(ctx, st);
+    return void await send(ctx, '✍️ <b>Непредвиденные — что именно?</b> Напишите коротко, например <code>ремонт приставки</code>.', withBack());
+  }
   if (d.type === 'Между своими' && !d.from) return void await askCard(ctx, cfg, st, 'from', 'С какой карты?');
   if (d.type === 'Между своими' && !d.to) return void await askCard(ctx, cfg, st, 'to', 'На какую карту?');
   if (isOut(d.type) && !d.from) return void await askCard(ctx, cfg, st, 'from', '💳 С какой карты или наличными?');
@@ -359,7 +365,7 @@ async function askNext(ctx, cfg, st) {
   return true;
 }
 async function askGroup(ctx, cfg, st) {
-  const groups = [...new Set(cfg.cats.filter(c => c.dir === st.d.dir && c.kind === st.d.type).map(c => c.group))];
+  const groups = [...new Set(cfg.cats.filter(c => c.dir === st.d.dir && c.kind === st.d.type && !(c.dir === 'PS SHOP' && c.group === 'Поставщик')).map(c => c.group))];   // «Поставщик» — только бот (владелец 27.11)
   st.await = null; st.groups = groups; await putSt(ctx, st);
   await send(ctx, '🏷 Категория?', withBack(chunk(groups.map((g, i) => [g, 'g:' + i]), 2)));
 }
@@ -820,6 +826,10 @@ async function onMessage(ctx, m) {
     if (!a) return send(ctx, 'Не понял сумму. Напишите только число, например <code>150000</code> или <code>$50</code>.');
     st.d.amount = a.amount; if (a.cur) st.d.cur = a.cur; st.d.cur = st.d.cur || 'сум';
     if (st.d.cur === '$' && isIn(st.d.type) && !st.d.to) { const c = cardByWord(cfg, 'Доллары'); if (c) st.d.to = c.name; }
+    return reshow(ctx, st);
+  }
+  if (st.await === 'note' && st.d) {
+    remember(st); st.d.cat = `Непредвиденные (${text.slice(0, 60)})`; st.await = null;
     return reshow(ctx, st);
   }
   if (st.await === 'book' && st.d) {
