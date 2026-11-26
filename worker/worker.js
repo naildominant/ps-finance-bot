@@ -652,7 +652,7 @@ async function rentShare(ctx, cfg) {
   const due = Math.round(profit * 0.6 - paid);
   const L = [`👤 <b>Брату перевести: ${fmt(Math.max(0, due))} сум</b>`,     // коротко (владелец 26.11); подробности — в таблице «Доли»
     `<i>60% прибыли аренды, уже отдано ${fmt(paid)}</i>`];
-  if (nid) L.push('', `🧡 Ваши 40%: +${fmt(mineAdd)} сум → Личное`);
+  if (nid) L.push('', `🧡 Ваши 40%: ${fmt(Math.round(profit * 0.4))} сум`, `<i>раньше уже записано ${fmt(mineDone)}, сейчас добавил +${fmt(mineAdd)} → Личное</i>`);
   if (due <= 0) return send(ctx, L.join('\n'));
   await store(ctx, { op: 'put', k: 'bro', v: { amount: due } });
   return send(ctx, L.join('\n'), [[['✅ Перевёл брату', 'bro:'], ['Позже', 'brol:']]]);
