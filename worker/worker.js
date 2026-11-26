@@ -381,6 +381,7 @@ async function doneMark(ctx, type) {
 const TEST_WIPE = true;                                   // /start стирает чат — только на время теста (выключить на запуске)
 // накопление (владелец 26.11): ВКЛАД = копилка на 14 000 000 сум к 06.01.2027 (вклад больше не резерв PS SHOP)
 const GOAL_SUM = 14000000, GOAL_DATE = '06.01.2027';
+const PS_RESERVE = 0;                                      // резерв PS SHOP: пока 0% — вся прибыль владельцу (26.11; было 20%)
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
 const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };   // долги и «Назад» → СТАРТ (владелец 26.11)
 
@@ -686,12 +687,13 @@ async function supplierDone(ctx, cfg, card, left) {
   if (!ctx.dry) await store(ctx, { op: 'put', k: 'psLast', v: Date.now() });
   if (net <= 0) { L.push('', 'Прибыли нет — доли не начисляю.');
     return send(ctx, L.join('\n')); }
-  const mine = Math.round(net * 0.8), res = net - mine;
-  const nid = await botRec(ctx, cfg, { dir: 'Личное', type: 'Доход', group: 'Доля из PS SHOP (80%)', cat: 'Доля из PS SHOP (80%)', amount: mine, comment: 'Доля 80% по расчёту ' + sid });
+  const mine = Math.round(net * (1 - PS_RESERVE)), res = net - mine;
+  const nid = await botRec(ctx, cfg, { dir: 'Личное', type: 'Доход', group: 'Доля из PS SHOP (80%)', cat: 'Доля из PS SHOP (80%)', amount: mine, comment: `Прибыль PS SHOP ${Math.round((1 - PS_RESERVE) * 100)}% по расчёту ` + sid });
   await gas(ctx, [{ op: 'set', sheet: 'Доли', range: 'K5:Q5', values: [['PS SHOP: дата', 'Поступления', 'Поставщику', 'На Расходку', 'Чистая прибыль', 'Наилю 80%', 'Резерв 20%']] },
     { op: 'append', sheet: 'Доли', row: ['', '', '', '', '', '', '', '', '', '', { d: Date.now() }, income, supPaid, toExp, net, mine, res] }]);
+  if (!res) { L.push('', `• Вся прибыль вам: <b>${fmt(mine)}</b> — записал в «Личное» (${nid})`); await send(ctx, L.join('\n')); return startScreen(ctx); }
   await store(ctx, { op: 'put', k: 'res:' + sid, v: { amount: res } });
-  L.push('', `• Вам 80%: <b>${fmt(mine)}</b> — записал в «Личное» (${nid})`, `• В резерв 20%: <b>${fmt(res)}</b> → переведите на «UZUM вклад»`);
+  L.push('', `• Вам ${Math.round((1 - PS_RESERVE) * 100)}%: <b>${fmt(mine)}</b> — записал в «Личное» (${nid})`, `• В резерв ${Math.round(PS_RESERVE * 100)}%: <b>${fmt(res)}</b>`);
   return send(ctx, L.join('\n'), [[['✅ Перевёл в резерв', 'rsv:' + sid], ['Позже', 'rsvl:' + sid]]]);
 }
 
