@@ -684,7 +684,7 @@ async function onMessage(ctx, m) {
     if (!said) return send(ctx, '🎤 Не расслышал. Попробуйте ещё раз или напишите текстом.');
     await send(ctx, '🎤 ' + esc(said));
     if (st.await && st.d) return onMessage(ctx, { ...m, voice: null, audio: null, video_note: null, text: said });
-    ctx.ptype = st.ptype; return startDraft(ctx, cfg, st.dir || null, said, 'голос');
+    ctx.ptype = st.ptype; ctx.ord = st.ord; ctx.ps = st.ps; return startDraft(ctx, cfg, st.dir || null, said, 'голос');
   }
   const img = m.photo ? m.photo[m.photo.length - 1] : (m.document && /^image\//.test(m.document.mime_type || '') ? m.document : null);
   if (img) {
@@ -693,7 +693,7 @@ async function onMessage(ctx, m) {
     if (!seen) return send(ctx, '📷 Не смог прочитать. Пришлите фото чётче или напишите текстом.');
     const full = (m.caption ? m.caption + '. ' : '') + seen;
     await send(ctx, '📷 На фото: ' + esc(seen));
-    ctx.ptype = st.ptype; return startDraft(ctx, cfg, st.dir || null, full, 'фото');
+    ctx.ptype = st.ptype; ctx.ord = st.ord; ctx.ps = st.ps; return startDraft(ctx, cfg, st.dir || null, full, 'фото');
   }
   if (m.document) return send(ctx, 'Этот файл я не читаю. Пришлите фото, голосовое или текст.');
   if (!text) return;
@@ -715,7 +715,7 @@ async function onMessage(ctx, m) {
     if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>24.11</code> или «вчера».');
     remember(st); st.d.date = y; return reshow(ctx, st);
   }
-  ctx.ptype = st.ptype; return startDraft(ctx, cfg, st.dir || null, text);   // без выбранного направления: одна запись — спросим кнопкой, несколько — направление по смыслу
+  ctx.ptype = st.ptype; ctx.ord = st.ord; ctx.ps = st.ps; return startDraft(ctx, cfg, st.dir || null, text);   // без выбранного направления: одна запись — спросим кнопкой, несколько — направление по смыслу
 }
 const complete = d => d.dir && d.type && d.amount != null && (d.type === 'Между своими' ? d.from && d.to
   : (!needsCat(d.type) || d.cat) && (isOut(d.type) ? d.from : d.to) && (d.type !== 'Предоплата' || d.book));
@@ -762,6 +762,7 @@ async function startDraft(ctx, cfg, dir, text, src) {
   if (ctx.ptype && single) recs[0].type = ctx.ptype;      // выбран ➕/➖ — тип не спрашиваем
   const drafts = recs.map(p => draftFrom(cfg, dir, p, text, single));
   if (src) drafts.forEach(d => { d.src = src; });
+  if (ctx.ord && single && drafts[0].dir === 'Аренда PS5') { drafts[0].ord = ctx.ord; drafts[0].ps = ctx.ps || ''; }   // выбранный клиент аренды
   if (!single) await send(ctx, `Нашёл ${drafts.length} записи. Покажу по очереди, каждую подтвердите ✅.`);
   drafts.forEach((d, i) => { d.n = i + 1; d.of = drafts.length; });
   const st = { dir: null, d: drafts[0], queue: drafts.slice(1) };
@@ -816,7 +817,7 @@ const ordOf = (m, itemId) => ordList(m).find(o => o.prepay.includes(itemId) || o
 function ordInfo(o, items) {
   const pre = items.filter(x => o.prepay.includes(x.id)), zal = items.filter(x => o.zalog.includes(x.id));
   const sp = pre.reduce((a, x) => a + x.sum, 0), sz = zal.reduce((a, x) => a + x.sum, 0);
-  return { pre, zal, sp, sz, label: [o.id, o.book ? 'бронь ' + o.book.slice(8, 10) + '.' + o.book.slice(5, 7) : '', sp ? 'предоплата ' + fmt(sp) : '', o.paid ? 'идёт' : '', sz ? 'залог ' + fmt(sz) : ''].filter(Boolean).join(' · ') };
+  return { pre, zal, sp, sz, label: [(o.ps ? o.ps + ' ' : '') + o.id, o.book ? 'бронь ' + o.book.slice(8, 10) + '.' + o.book.slice(5, 7) : '', sp ? 'предоплата ' + fmt(sp) : '', o.paid ? 'идёт' : '', sz ? 'залог ' + fmt(sz) : ''].filter(Boolean).join(' · ') };
 }
 function rentDraft(cfg, type, f) {                        // черновик аренды кнопками (текст пустой — чтобы цифры из «A1» не стали суммой)
   const d = draftFrom(cfg, 'Аренда PS5', { type, amount: f.amount || null }, '', true);
@@ -904,16 +905,40 @@ async function dropFromOrders(ctx, id) {
       if (!o.prepay.length && !o.zalog.length && !o.paid) delete m[k]; } }
   if (ch) await putOrds(ctx, m);
 }
-async function onCallback(ctx, q) {
+
+// Аренда (владелец 26.11): сначала выбор клиента (заказа), новый клиент — с отметкой приставки △ ✕ □
+const PS_MARKS = ['△', '✕', '□'];
+async function rentStart(ctx) {
+  const m = await getOrds(ctx), items = await openItems(ctx), os = ordList(m);
+  if (!os.length) return rentConsole(ctx);
+  const rows = os.map(o => [[ordInfo(o, items).label, 'ro:' + o.id]]);
+  rows.push([['🆕 Новый клиент', 'ro:new']], [BACK]);
+  return send(ctx, '<b>АРЕНДА: какой клиент?</b>', rows);
+}
+const rentConsole = ctx => send(ctx, '<b>Новый клиент: какая приставка?</b>', [PS_MARKS.map(p => [p, 'rp:' + p]), [BACK]]);
+async function rentScreen(ctx, st) {                        // экран клиента: оплата (она же продление) / предоплата / залог
+  const m = await getOrds(ctx), items = await openItems(ctx), o = st.ord !== 'new' ? m[st.ord] : null;
+  const title = o ? ordInfo(o, items).label : `${st.ps || ''} новый клиент`;
+  const rows = [[[o && o.paid ? 'Оплата' : 'Оплата', 'ar:in']], [['Предоплата', 'pt:pre'], ['Залог', 'ar:zl']]];
+  if (o) {
+    const i = ordInfo(o, items);
+    for (const x of i.zal) rows.push([['↩️ Вернул залог', 'zr:' + x.id], ['✋ Удержал часть', 'zk:' + x.id]]);
+    if (!o.paid) for (const x of i.pre) rows.push([['🔥 Бронь сгорела', 'pb:' + x.id]]);
+    if (!i.zal.length && !i.pre.length) rows.push([['🏁 Закрыть заказ', 'ac:' + o.id]]);
+  }
+  rows.push([BACK]);
+  return send(ctx, `<b>АРЕНДА ${esc(title)}</b>` + (o && o.paid ? '\nКлиент уже взял приставку — «Оплата» запишется как продление.' : ''), rows);
+}
+async function onCallback(ctx, q, again) {
   const cfg = await config(ctx);
   const [k, v] = q.data.split(':');
   const mid = q.message.message_id;
   let st = await getSt(ctx);
-  await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
+  if (!again) await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
   if (k === 'pt') {                                  // готовый тип записи: PS SHOP ➕/➖, Аренда — предоплата/залог
     const T = { '+': 'Доход', '-': 'Расход', pre: 'Предоплата', zal: 'Залог' }[v];
     const dir = st.dir || (v === 'pre' || v === 'zal' ? 'Аренда PS5' : 'PS SHOP');
-    await putSt(ctx, { dir, ptype: T });
+    await putSt(ctx, { dir, ptype: T, ord: st.ord, ps: st.ps });
     await gone(ctx, mid);
     const hint = { '+': 'Пишите доход. Например: «игра 450 000 на Приёмку».', '-': 'Пишите расход. Например: «OLX 50 000 с Расходки».',
       pre: 'Пишите предоплату: сумму, карту и дату брони. Например: «50 000 на Капитал, бронь 28.11».', zal: 'Пишите залог: сумму и карту. Например: «залог 300 000 на Капитал».' }[v];
@@ -921,19 +946,28 @@ async function onCallback(ctx, q) {
     return send(ctx, hint, [[BACK]]);
   }
   if (k === 'mr') { await gone(ctx, mid); await putSt(ctx, {}); return monthReport(ctx, v); }
-  if (k === 'ar') {                                  // экран аренды: поступление / залог / заказы
-    await gone(ctx, mid); await putSt(ctx, { dir: 'Аренда PS5' });
-    return v === 'list' ? rentOrders(ctx) : rentPick(ctx, v);
+  if (k === 'ro' || k === 'rp') {                    // выбран клиент / приставка нового клиента
+    await gone(ctx, mid);
+    if (k === 'ro' && v === 'new') return rentConsole(ctx);
+    const nst = k === 'ro' ? { dir: 'Аренда PS5', ord: v } : { dir: 'Аренда PS5', ord: 'new', ps: v };
+    await putSt(ctx, nst); return rentScreen(ctx, nst);
+  }
+  if (k === 'ar') {                                  // оплата (или продление) / залог для выбранного клиента
+    await gone(ctx, mid);
+    if (v === 'list') { await putSt(ctx, { dir: 'Аренда PS5' }); return rentOrders(ctx); }
+    if (!st.ord) { await putSt(ctx, { dir: 'Аренда PS5' }); return rentPick(ctx, v); }
+    return onCallback(ctx, { ...q, data: `ao:${v}|${st.ord}` }, true);
   }
   if (k === 'ao') {                                  // выбран заказ (или новый)
     const [kind, oid] = v.split('|'); await gone(ctx, mid);
-    const m = await getOrds(ctx), o = m[oid];
-    if (kind === 'zl') return askNext(ctx, cfg, { d: rentDraft(cfg, 'Залог', { ord: oid, comment: 'Залог ' + (o ? o.id : 'нового заказа') }), queue: [] });
+    const m = await getOrds(ctx), o = m[oid], ps = oid === 'new' ? st.ps || '' : undefined;
+    if (kind === 'zl') return askNext(ctx, cfg, { d: rentDraft(cfg, 'Залог', { ord: oid, ps, comment: 'Залог ' + (o ? o.id : 'нового клиента ' + (ps || '')) }), queue: [] });
     if (o && o.paid) {                                // заказ уже идёт → продление
       const z = (await openItems(ctx)).filter(x => o.zalog.includes(x.id));
+      if (!z.length) return askNext(ctx, cfg, { d: rentDraft(cfg, 'Доход', { ord: oid, group: 'Аренда', cat: 'Продление', comment: 'Продление ' + oid }), queue: [] });
       return send(ctx, `➕ <b>Продление ${o.id}: откуда деньги?</b>`, [[['💵 Новые деньги', `ap:${oid}`]], ...z.map(x => [[`🔐 Из залога (${fmt(x.sum)})`, 'zp:' + x.id]]), [BACK]]);
     }
-    return askNext(ctx, cfg, { d: rentDraft(cfg, 'Доход', { ord: oid, group: 'Аренда', cat: 'Оплата аренды', comment: 'Оплата аренды ' + (o ? o.id : 'без предоплаты') }), queue: [] });
+    return askNext(ctx, cfg, { d: rentDraft(cfg, 'Доход', { ord: oid, ps, group: 'Аренда', cat: 'Оплата аренды', comment: 'Оплата аренды ' + (o ? o.id : 'нового клиента ' + (ps || '')) }), queue: [] });
   }
   if (k === 'ap') { await gone(ctx, mid); return askNext(ctx, cfg, { d: rentDraft(cfg, 'Доход', { ord: v, group: 'Аренда', cat: 'Продление', comment: 'Продление ' + v }), queue: [] }); }
   if (k === 'zg') {                                  // залог после оплаты
@@ -950,7 +984,7 @@ async function onCallback(ctx, q) {
   }
   if (k === 'pa') {                                  // предоплата аренды кнопкой суммы → дальше карта и дата брони кнопками
     await gone(ctx, mid);
-    const d = rentDraft(cfg, 'Предоплата', { amount: Number(v), ord: 'new', comment: 'Предоплата ' + fmt(Number(v)) });
+    const d = rentDraft(cfg, 'Предоплата', { amount: Number(v), ord: st.ord || 'new', ps: st.ps || '', comment: 'Предоплата ' + fmt(Number(v)) });
     return askNext(ctx, cfg, { d, queue: [] });
   }
   if (k === 'd') {                                   // направление
@@ -963,7 +997,7 @@ async function onCallback(ctx, q) {
     const extra = dir === 'PS SHOP' ? [[['Закрыл оплату поставщику ✅', 'sup']]] : [];
     extra.push([BACK]);                                   // назад в главное меню
     if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [extra[0], [['+', 'pt:+'], ['−', 'pt:-']], ...extra.slice(1)]);
-    if (dir === 'Аренда PS5') return send(ctx, '<b>АРЕНДА ?</b>', [[['Оплата', 'ar:in']], [['Предоплата', 'pt:pre'], ['Залог', 'ar:zl']], [['📋 Заказы', 'ar:list']], [BACK]]);
+    if (dir === 'Аренда PS5') return rentStart(ctx);
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
   if (k === 'bk' && st.tool) { await gone(ctx, mid); await putSt(ctx, {}); return dirMenu(ctx); }
@@ -1003,7 +1037,7 @@ async function onCallback(ctx, q) {
       if (!d.edit && d.dir === 'Аренда PS5' && (d.type === 'Предоплата' || d.type === 'Залог') && !d.ord) d.ord = 'new';
       if (!d.edit && d.ord === 'new') {                   // новый заказ аренды
         const m = await getOrds(ctx); const oid = 'A' + (++m._n);
-        m[oid] = { id: oid, book: '', prepay: [], zalog: [], paid: false, closed: false, at: Date.now() }; await putOrds(ctx, m); d.ord = oid;
+        m[oid] = { id: oid, ps: d.ps || '', book: '', prepay: [], zalog: [], paid: false, closed: false, at: Date.now() }; await putOrds(ctx, m); d.ord = oid;
       }
       const id = await save(ctx, cfg, d);
       await edit(ctx, mid, `✅ Записано · ${id}${d.ord && !d.edit ? ' · заказ ' + d.ord : ''}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
