@@ -781,7 +781,7 @@ async function onMessage(ctx, m) {
   if (!text) return;
   if (st.await === 'tool' && st.tool && st.tool.kind === 'hpsadd') {   // рубли за заявку
     const r = num(text.replace(/руб[а-я.]*|₽|rub/ig, ''));
-    return r > 0 ? addSupRub(ctx, r) : send(ctx, 'Не понял сумму. Напишите рубли числом, например <code>1929</code>.');
+    return r > 0 ? addSupRub(ctx, r) : send(ctx, 'Напишите рубли числом, например <code>400</code>, или нажмите «Позже».', [[['Позже', 'sp:later']]]);
   }
   { const h = parseHps(text); if (h) return setSupDebt(ctx, h); }   // пересланный ответ HPS на /report
   { const r = text.match(/^(?:долг\s*(?:поставщику)?\s*)?([\d\s.,]+)\s*(?:руб[а-я.]*|₽|rub)$/i);   // «4607 руб», «долг 4 607,72 ₽»
@@ -1252,8 +1252,8 @@ async function onCallback(ctx, q, again) {
         mark = 'Доход';
       }
       if (!d.edit && d.dir === 'PS SHOP' && d.type === 'Доход' && d.cat !== 'Проценты по вкладу' && !(st.queue && st.queue.length)) {
-        await send(ctx, '🧾 <b>Поставщику?</b> Сколько рублей ушло на эту заявку.', [[['✍️ Поставщику', 'sp:rub'], ['Позже', 'sp:later']]]);
-        ctx.noTrack = false; await putSt(ctx, {}); return;     // ждём ответ (как с братом)
+        await send(ctx, '🧾 <b>Поставщику?</b> Напишите, сколько <b>рублей</b> ушло на эту заявку, например <code>400</code>. Или нажмите «Позже».', [[['Позже', 'sp:later']]]);
+        ctx.noTrack = false; await putSt(ctx, { tool: { kind: 'hpsadd' }, await: 'tool' }); return;     // ждём рубли или «Позже»
       }
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
         const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
