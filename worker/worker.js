@@ -1111,7 +1111,7 @@ async function onCallback(ctx, q, again) {
   if (k === 'supd') { await gone(ctx, mid); await store(ctx, { op: 'put', k: 'supDebt', v: null }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); return closeSupplier(ctx, cfg); }   // долг погашен до следующего /report
   if (k === 'sp') {                                  // после заявки PS SHOP: сколько рублей ушло поставщику
     await tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } });
-    if (v === 'later') { await store(ctx, { op: 'put', k: 'supUnknown', v: true }); await putSt(ctx, {}); return startScreen(ctx); }
+    if (v === 'later') { await store(ctx, { op: 'put', k: 'supUnknown', v: true }); await putSt(ctx, {}); ctx.noTrack = true; await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx); }   // «Позже» → тоже мишка
     await putSt(ctx, { tool: { kind: 'hpsadd' }, await: 'tool' });
     return send(ctx, '🧾 Сколько <b>рублей</b> ушло поставщику на эту заявку? Например <code>1929</code>.', [[BACK]]);
   }
