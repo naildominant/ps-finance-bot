@@ -722,6 +722,13 @@ async function onMessage(ctx, m) {
   }
   if (m.document) return send(ctx, 'Этот файл я не читаю. Пришлите фото, голосовое или текст.');
   if (!text) return;
+  { const h = parseHps(text); if (h) {                     // пересланный ответ HPS на /report
+    const uzs = Math.round(h.rub * RUB_TO_UZS);
+    if (!ctx.dry) await store(ctx, { op: 'put', k: 'supDebt', v: { ...h, uzs, at: Date.now() } });
+    ctx.noTrack = true;
+    await send(ctx, `🧾 <b>Долг поставщику: ${fmt(uzs)} сум</b>\n${String(h.usdt).replace('.', ',')} USDT ≈ ${String(h.rub).replace('.', ',')} RUB × ${RUB_TO_UZS}` + (h.usdt > SUP_LIMIT_USD ? '\nБольше $120 — кнопка долга будет на СТАРТ.' : '\nМеньше $120 — пока не напоминаю.'));
+    ctx.noTrack = false; return startScreen(ctx);
+  } }
   if (st.await === 'tool' && st.tool) return onToolText(ctx, cfg, st, text);
   if (/закрыл[а-я]*\s+(оплат|поставщ)/i.test(text)) return closeSupplier(ctx, cfg);
   if (st.await === 'amount' && st.d) {
@@ -994,20 +1001,29 @@ async function rentDue(ctx, cfg) {
   const paid = ars ? J.filter(x => x.type === 'Между своими' && x.to === ars.name).reduce((a, x) => a + x.uzs, 0) : 0;
   return Math.round((inc - exp) * 0.6 - paid);
 }
-const SUP_LIMIT_USD = 120;                                  // долг поставщику — остаток на карте «Поставщик» больше $120
-async function supDue(ctx, cfg) {
-  const sup = cardByWord(cfg, 'Поставщик'); if (!sup) return 0;
-  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
-  const r = g.values.find(r => String(r[0]) === sup.name); const bal = Number(r && r[8]) || 0;
-  const rate = await cbuRate(ctx, todayYmd());
-  return rate && bal / rate > SUP_LIMIT_USD ? Math.round(bal) : 0;
+// долг поставщику (владелец 26.11): из ответа бота HPS на /report — «Долг: 52,42 USDT | ≈ 4 607.72 RUB» → рубли × 202 = сумы.
+// Владелец пересылает этот ответ боту; в 23:03 бот напоминает. Кнопка долга на СТАРТ — если долг больше $120 (USDT).
+const RUB_TO_UZS = 202, SUP_LIMIT_USD = 120;
+const num = t => Number(String(t).replace(/\s/g, '').replace(',', '.'));
+function parseHps(text) {
+  const m = String(text).match(/Долг:\s*([\d\s.,]+)\s*USDT[^\d≈]*≈\s*([\d\s.,]+)\s*RUB/i);
+  return m ? { usdt: num(m[1]), rub: num(m[2]) } : null;
+}
+async function supDue(ctx) {
+  const x = await store(ctx, { op: 'get', k: 'supDebt' });
+  return x && x.usdt > SUP_LIMIT_USD ? x.uzs : 0;
+}
+async function supReminder(env) {
+  const ctx = { env, out: [] }; const cfg = await config(ctx, true);
+  ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
+  await send(ctx, '🧾 <b>23:03 — проверим долг поставщику</b>\nНапишите <code>/report</code> в группе «PSSHOP x HPS» и перешлите ответ сюда. Я посчитаю долг в сумах.');
 }
 async function startScreen(ctx) {
   await purge(ctx); await putSt(ctx, {});
   const cfg = await config(ctx);
   const rows = [[['СТАРТ', 'menu']]];
   const b = await rentDue(ctx, cfg); if (b > 0) rows.push([[`👤 Долг брату: ${fmt(b)}`, 'dbro']]);
-  const p = await supDue(ctx, cfg); if (p > 0) rows.push([[`🧾 Долг поставщику: ${fmt(p)}`, 'dsup']]);
+  const p = await supDue(ctx); if (p > 0) rows.push([[`🧾 Долг поставщику: ${fmt(p)}`, 'dsup']]);
   return send(ctx, PAD(9) + '👇' + PAD(9), rows);
 }
 async function onCallback(ctx, q, again) {
@@ -1027,6 +1043,7 @@ async function onCallback(ctx, q, again) {
     return send(ctx, hint, [[BACK]]);
   }
   if (k === 'menu') { await gone(ctx, mid); return dirMenu(ctx); }
+  if (k === 'supd') { await gone(ctx, mid); await store(ctx, { op: 'put', k: 'supDebt', v: null }); return closeSupplier(ctx, cfg); }   // долг погашен до следующего /report
   if (k === 'st0') { await gone(ctx, mid); return startScreen(ctx); }
   if (k === 'dbro') {
     await gone(ctx, mid); const due = await rentDue(ctx, cfg);
@@ -1035,9 +1052,9 @@ async function onCallback(ctx, q, again) {
     return send(ctx, `👤 <b>Брату перевести: ${fmt(due)} сум</b>\nПеревели?`, [[['✅ Перевёл брату', 'bro:'], ['Позже', 'brol:']]]);
   }
   if (k === 'dsup') {
-    await gone(ctx, mid); const due = await supDue(ctx, cfg);
+    await gone(ctx, mid); const due = await supDue(ctx);
     if (due <= 0) return startScreen(ctx);
-    return send(ctx, `🧾 <b>На карте поставщика ${fmt(due)} сум</b>\nОплатили поставщику?`, [[['✅ Оплатил', 'sup'], ['Позже', 'st0']]]);
+    return send(ctx, `🧾 <b>Долг поставщику: ${fmt(due)} сум</b>\nОплатили поставщику?`, [[['✅ Оплатил', 'supd'], ['Позже', 'st0']]]);
   }
   if (k === 'mr') { await gone(ctx, mid); await putSt(ctx, {}); return monthReport(ctx, v); }
   if (k === 'ro' || k === 'rp') {                    // выбран клиент / приставка нового клиента
@@ -1263,7 +1280,7 @@ export class State {
 }
 
 export default {
-  async scheduled(ev, env, ectx) { ectx.waitUntil(morning(env)); },
+  async scheduled(ev, env, ectx) { ectx.waitUntil(ev.cron === '3 18 * * *' ? supReminder(env) : morning(env)); },
   async fetch(req, env, ectx) {
     const u = new URL(req.url);
     if (u.pathname === '/tg' && req.method === 'POST') {
