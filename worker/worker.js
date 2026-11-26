@@ -1021,17 +1021,22 @@ async function monthReport(ctx, kind) {
   const [y, m] = ym.split('-').map(Number);
   const head = `${kind === 'in' ? '📈 <b>Доходы' : '📉 <b>Расходы'} за ${MONTHS[m - 1].toLowerCase()} ${y}</b>`;
   if (!recs.length) return send(ctx, head + '\n\nЗаписей пока нет.', [[BACK]]);
-  const byDay = {}, byDir = {}; let tot = 0;
-  for (const x of recs) { (byDay[x.day] = byDay[x.day] || []).push(x); byDir[x.dir] = (byDir[x.dir] || 0) + x.uzs; tot += x.uzs; }
-  const L = [head, ''];
-  for (const day of Object.keys(byDay).sort().reverse()) {
-    const xs = byDay[day], dt = new Date(day + 'T00:00:00Z');
-    L.push(`🗓 <b>${day.slice(8, 10)}.${day.slice(5, 7)} · ${WD[dt.getUTCDay()]}</b>`);
-    for (const x of xs) L.push(`   • <b>${fmt(x.uzs)}</b>${x.usd ? ` ($${fmt(x.usd)})` : ''} — ${esc(x.dir)} · ${esc(x.cat)}${x.card ? ' · ' + esc(String(x.card).replace(/ \(.*\)$/, '')) : ''}`);
-    L.push(`   <i>за день: ${fmt(xs.reduce((a, x) => a + x.uzs, 0))}</i>`, '');
+  // сводка (владелец 27.11, вариант 1): по направлениям, внутри — категории от большей суммы к меньшей, без списка записей
+  const byDir = {}; let tot = 0;
+  for (const x of recs) {
+    const key = /^Непредвиденные/.test(x.cat) ? 'Непредвиденные' : x.cat || 'Без категории';
+    const D = byDir[x.dir] = byDir[x.dir] || { sum: 0, cats: {} };
+    D.sum += x.uzs; D.cats[key] = (D.cats[key] || 0) + x.uzs; tot += x.uzs;
   }
-  L.push('━━━━━━━━━━', `${kind === 'in' ? 'Всего доходов' : 'Всего расходов'}: <b>${fmt(tot)} сум</b>`, '');
-  for (const d of DIRS) if (byDir[d]) L.push(`${d}: <b>${fmt(byDir[d])}</b>`);
+  const L = [head, ''];
+  const name = d => d === 'Leadex' ? 'LEADEX' : d;
+  for (const d of [...DIRS, ...Object.keys(byDir).filter(k => !DIRS.includes(k))]) {
+    const D = byDir[d]; if (!D) continue;
+    L.push(`<b>${esc(name(d))}: ${fmt(D.sum)}</b>`);
+    for (const [c, v] of Object.entries(D.cats).sort((a, b) => b[1] - a[1])) L.push(`   ${esc(c)} — ${fmt(v)}`);
+    L.push('');
+  }
+  L.push('━━━━━━━━━━', `<b>Всего: ${fmt(tot)} сум</b>`);
   const parts = []; let cur = '';                         // Telegram: не больше 4096 знаков — режем
   for (const line of L) { if ((cur + line).length > 3800) { parts.push(cur); cur = ''; } cur += line + '\n'; }
   parts.push(cur);
