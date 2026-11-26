@@ -2,8 +2,8 @@
 // Этап 2: текст → разбор (Workers AI) → переспрос → итог с кнопками ✅ ❌ ✏️ → запись в Google Таблицу.
 
 const DIRS = ['PS SHOP', 'Аренда PS5', 'Leadex', 'Личное'];
-const TYPES = ['Доход', 'Расход', 'Между своими', 'Предоплата', 'Залог', 'Вложение'];
-const IN_T = ['Доход', 'Предоплата', 'Залог'], OUT_T = ['Расход', 'Вложение', 'Возврат залога'];
+const TYPES = ['Доход', 'Расход', 'Между своими', 'Предоплата', 'Залог', 'Вложение', 'Дал в долг', 'Возврат долга'];
+const IN_T = ['Доход', 'Предоплата', 'Залог', 'Возврат долга'], OUT_T = ['Расход', 'Вложение', 'Возврат залога', 'Дал в долг'];   // «Дал в долг» — не расход (владелец 27.11)
 const isIn = t => IN_T.includes(t), isOut = t => OUT_T.includes(t), needsCat = t => t === 'Доход' || t === 'Расход';
 const typeRows = () => chunk(TYPES.map((t, i) => [TLABEL(t), 'ty:' + i]), 3);
 const TLABEL = t => (t === 'Между своими' ? 'Между' : t);   // короткая подпись на кнопке
@@ -321,6 +321,7 @@ function summary(d) {
   else L.push(`💳 ${(isOut(d.type) ? d.from : d.to) || '—'}`);
   if (d.type === 'Предоплата') L.push(d.dir === 'Leadex' ? `🤝 Сделка: ${esc(d.dealName || '—')}` : `🗓 Бронь на ${d.book ? human(d.book) : '—'}`);
   if (d.type === 'Предоплата' || d.type === 'Залог') L.push('ℹ️ Чужие деньги: в доход не идут, пока не закроете');
+  if (d.type === 'Дал в долг') L.push(`🤝 Кому: ${esc(d.whom || '—')}`, `🗓 Вернут: ${d.due ? human(d.due) : '—'}`, 'ℹ️ Не расход: деньги вернутся');
   L.push(`📅 ${human(d.date)}${d.time ? ', ' + d.time : ''}`);
   if (d.comment) L.push(`💬 ${d.comment}`);
   return L.join('\n');
@@ -362,6 +363,10 @@ async function askNext(ctx, cfg, st) {
   }
   if (d.type === 'Предоплата' && d.dir === 'Аренда PS5' && !d.to) { const c = cardByWord(cfg, 'Капитал'); if (c) d.to = c.name; }   // предоплата аренды всегда на Капитал (владелец 26.11)
   if (isIn(d.type) && !d.to) return void await askCard(ctx, cfg, st, 'to', '💳 На какую карту пришли деньги?');
+  if (d.type === 'Дал в долг' && !d.whom) { st.await = 'whom'; await putSt(ctx, st);
+    return void await send(ctx, '🤝 <b>Кому дали в долг?</b> Напишите имя.', withBack()); }
+  if (d.type === 'Дал в долг' && !d.due) { st.await = null; await putSt(ctx, st);
+    return void await send(ctx, '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>Когда вернут долг?</b> Выберите дату.', [...await calendar(ctx, todayYmd().slice(0, 7), true)]); }
   if (d.type === 'Предоплата' && d.dir === 'Leadex' && !d.deal) { st.await = 'deal'; await putSt(ctx, st);   // предоплата LEADEX = сделка
     return void await send(ctx, '🤝 <b>Название сделки?</b> Например <code>сайт для Азиза</code>.', withBack()); }
   if (d.type === 'Предоплата' && d.dir !== 'Leadex' && !d.book) { st.await = 'book'; await putSt(ctx, st);
@@ -607,6 +612,10 @@ async function morning(env) {
     if (dep) { await putSt(ctx, { tool: { kind: 'interest', card: dep.name }, await: 'tool' });
       await send(ctx, `📅 Начало месяца. Сколько сейчас на «${dep.name}»? Напишите сумму из приложения — разницу (проценты банка) прибавлю к вкладу.`); }
   }
+  for (const x of Object.values((await store(ctx, { op: 'get', k: 'loans' })) || {})) {   // долги мне: в день возврата
+    if (x.done || !x.due || x.due > today) continue;
+    await send(ctx, `🤝 <b>Сегодня должны вернуть долг</b>\n${esc(x.whom)}: ${fmt(x.sum)} сум`, [[['✅ Вернули', 'ln:' + x.id]]]);
+  }
   for (const x of await openItems(ctx)) {
     if (x.type !== 'Предоплата' || !x.book || !x.book.d) continue;
     if (ymdT(new Date(x.book.d + TZ_MS)) > today) continue;
@@ -846,6 +855,7 @@ async function onMessage(ctx, m) {
     return reshow(ctx, st);
   }
   if (st.await === 'deal' && st.d) { remember(st); st.d.deal = 'new'; st.d.dealName = text.slice(0, 60); st.d.comment = 'Предоплата: ' + st.d.dealName; st.await = null; return reshow(ctx, st); }
+  if (st.await === 'whom' && st.d) { remember(st); st.d.whom = text.slice(0, 40); st.d.comment = 'Дал в долг: ' + st.d.whom; st.await = null; return reshow(ctx, st); }
   if (st.await === 'note' && st.d) {
     remember(st); st.d.cat = `Непредвиденные (${text.slice(0, 60)})`; st.await = null;
     return reshow(ctx, st);
@@ -863,7 +873,7 @@ async function onMessage(ctx, m) {
   ctx.ptype = st.ptype; ctx.ord = st.ord; ctx.ps = st.ps; return startDraft(ctx, cfg, st.dir || null, text);   // без выбранного направления: одна запись — спросим кнопкой, несколько — направление по смыслу
 }
 const complete = d => d.dir && d.type && d.amount != null && (d.type === 'Между своими' ? d.from && d.to
-  : (!needsCat(d.type) || d.cat) && (isOut(d.type) ? d.from : d.to) && (d.type !== 'Предоплата' || (d.dir === 'Leadex' ? d.deal : d.book)));
+  : (!needsCat(d.type) || d.cat) && (isOut(d.type) ? d.from : d.to) && (d.type !== 'Предоплата' || (d.dir === 'Leadex' ? d.deal : d.book)) && (d.type !== 'Дал в долг' || (d.whom && d.due)));
 async function reshow(ctx, st) {
   if (!complete(st.d)) return askNext(ctx, await config(ctx), st);
   st.await = null; await putSt(ctx, st);
@@ -922,9 +932,9 @@ async function nextOrMenu(ctx, cfg, st) {
 
 // календарь брони: дни с открытыми бронями — красные, сегодня — синий, прошедшие — недоступны
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
-async function calendar(ctx, ym) {
+async function calendar(ctx, ym, loan) {
   const booked = {};
-  for (const x of await openItems(ctx)) if (x.type === 'Предоплата' && x.book && x.book.d) { const k = ymdT(new Date(x.book.d + TZ_MS)); booked[k] = (booked[k] || 0) + 1; }
+  if (!loan) for (const x of await openItems(ctx)) if (x.type === 'Предоплата' && x.book && x.book.d) { const k = ymdT(new Date(x.book.d + TZ_MS)); booked[k] = (booked[k] || 0) + 1; }
   const [y, m] = ym.split('-').map(Number), today = todayYmd();
   const first = new Date(Date.UTC(y, m - 1, 1)), days = new Date(Date.UTC(y, m, 0)).getUTCDate(), lead = (first.getUTCDay() + 6) % 7;
   const rows = [[[`${MONTHS[m - 1]} ${y}`, 'noop']], ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(w => [w, 'noop'])];
@@ -1262,6 +1272,14 @@ async function onCallback(ctx, q, again) {
     if (v === 'tab') return send(ctx, '📄 Таблицы аренды ещё нет. Привяжем позже.', [[['↩️ Назад', 'd:1']]]);
     return onCallback(ctx, { ...q, data: 'pt:-' }, true);
   }
+  if (k === 'ln') {                                  // «Дал в долг» (владелец 27.11)
+    await gone(ctx, mid);
+    if (v === 'new') return askNext(ctx, cfg, { d: Object.assign(draftFrom(cfg, 'Личное', { type: 'Дал в долг' }, '', true), { src: 'кнопка', n: 1, of: 1, comment: 'Дал в долг' }), queue: [], dir: 'Личное' });
+    const L = (await store(ctx, { op: 'get', k: 'loans' })) || {}, x = L[v];
+    if (!x || x.done) return send(ctx, 'Этот долг уже закрыт.');
+    const d = Object.assign(draftFrom(cfg, 'Личное', { type: 'Возврат долга', amount: x.sum }, '', true), { src: 'кнопка', n: 1, of: 1, loan: v, comment: `Вернул долг: ${x.whom}` });
+    return askNext(ctx, cfg, { d, queue: [], dir: 'Личное' });
+  }
   if (k === 'lq') {                                  // экран LEADEX
     await gone(ctx, mid); await putSt(ctx, { dir: 'Leadex' });
     if (v === 'tab') return send(ctx, '📄 Таблицы LEADEX ещё нет. Привяжем позже.', [[['↩️ Назад', 'd:2']]]);
@@ -1333,7 +1351,7 @@ async function onCallback(ctx, q, again) {
     if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [[['+', 'pt:+']], [['−', 'pt:-']], [['📉 Расходы за месяц', 'mr:out|0']], ...extra]);   // на всю ширину, с подписью (владелец 27.11)
     if (dir === 'Аренда PS5') return rentStart(ctx);
     if (dir === 'Leadex') return leadexScreen(ctx);
-    if (dir === 'Личное') return send(ctx, '<b>ЛИЧНОЕ</b>', [[['−', 'pt:-']], [['+', 'pt:+']], [['📉 Расходы за месяц', 'mr:out|3']], ...extra]);   // владелец 27.11
+    if (dir === 'Личное') return send(ctx, '<b>ЛИЧНОЕ</b>', [[['−', 'pt:-']], [['+', 'pt:+']], [['🤝 Дал в долг', 'ln:new', 'primary']], [['📉 Расходы за месяц', 'mr:out|3']], ...extra]);   // владелец 27.11
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
   if (k === 'bk' && st.tool) { ctx.editMid = mid; await putSt(ctx, {}); return dirMenu(ctx); }
@@ -1359,10 +1377,11 @@ async function onCallback(ctx, q, again) {
   }
   if (k === 'k') { const c = cfg.cards[+v]; d[st.side] = c.name; await gone(ctx, mid); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
   if (k === 'cl' && d) {                            // календарь: открыть / листать месяц
-    const txt = '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>Выберите дату брони</b>\nКрасные дни • — уже есть бронь.';
-    return q.message.text && q.message.text.includes('Выберите дату брони') ? edit(ctx, mid, txt, await calendar(ctx, v)) : (await gone(ctx, mid), send(ctx, txt, await calendar(ctx, v)));
+    const loan = d.type === 'Дал в долг';
+    const txt = loan ? '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>Когда вернут долг?</b> Выберите дату.' : '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>Выберите дату брони</b>\nКрасные дни • — уже есть бронь.';
+    return edit(ctx, mid, txt, await calendar(ctx, v, loan));
   }
-  if (k === 'cd' && d) { d.book = v; await gone(ctx, mid); return reshow(ctx, st); }
+  if (k === 'cd' && d) { if (d.type === 'Дал в долг') d.due = v; else d.book = v; await gone(ctx, mid); return reshow(ctx, st); }
   if (k === 'cord' && d) { d.ord = v; await gone(ctx, mid); return askNext(ctx, cfg, st); }
   if (k === 'cps' && d) { d.ord = 'new'; d.ps = v; await gone(ctx, mid); return askNext(ctx, cfg, st); }
   if (k === 'bd') { d.book = shiftYmd(todayYmd(), Number(v)); await gone(ctx, mid); return reshow(ctx, st); }
@@ -1379,6 +1398,17 @@ async function onCallback(ctx, q, again) {
         for (const qd of st.queue || []) if (qd.ord === 'new') qd.ord = oid;   // остальные части той же оплаты — в этот же заказ
       }
       const id = await save(ctx, cfg, d);
+      if (!d.edit && d.type === 'Дал в долг') {              // долг мне: в DO и строкой в «Долги и накопления»
+        const L = (await store(ctx, { op: 'get', k: 'loans' })) || {};
+        L[id] = { id, whom: d.whom, sum: d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount, due: d.due, card: d.from, done: false };
+        await store(ctx, { op: 'put', k: 'loans', v: L });
+        await gas(ctx, [{ op: 'append', sheet: 'Долги и накопления', row: [`Мне должен: ${d.whom} (${id})`, 'мне должны', L[id].sum, d.due.split('-').reverse().join('.'), 0, L[id].sum] }]);
+      }
+      if (!d.edit && d.type === 'Возврат долга' && d.loan) {
+        const L = (await store(ctx, { op: 'get', k: 'loans' })) || {}; if (L[d.loan]) { L[d.loan].done = true; await store(ctx, { op: 'put', k: 'loans', v: L }); }
+        const [f] = await gas(ctx, [{ op: 'find', sheet: 'Долги и накопления', col: 'A', value: `Мне должен: ${L[d.loan] ? L[d.loan].whom : ''} (${d.loan})` }]);
+        if (f.row) await gas(ctx, [{ op: 'set', sheet: 'Долги и накопления', range: `E${f.row}:F${f.row}`, values: [[L[d.loan].sum, 0]] }]);
+      }
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Предоплата') {   // новая сделка LEADEX
         const m = await getDeals(ctx); const did = 'D' + (++m._n);
         m[did] = { id: did, name: d.dealName || 'сделка ' + did, prepay: [id], closed: false, at: Date.now() }; await putDeals(ctx, m);
