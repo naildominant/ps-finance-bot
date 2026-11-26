@@ -1070,6 +1070,17 @@ async function supDue(ctx) {
   const x = await store(ctx, { op: 'get', k: 'supDebt' });
   return x && x.uzs > 0 ? x.uzs : 0;                     // лимит $120 убран (владелец 26.11) — долг виден всегда
 }
+// квартира $400, 26-го (владелец 26.11): напоминание 25-го вечером (23:03) и 26-го в 12:31
+const FLAT_USD = 400, FLAT_DAY = 26;
+async function flatReminder(env, when) {
+  const d = Number(todayYmd().slice(8, 10));
+  if (when === 'eve' ? d !== FLAT_DAY - 1 : d !== FLAT_DAY) return;
+  const ctx = { env, out: [] }; const cfg = await config(ctx, true);
+  ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
+  ctx.noTrack = true;
+  await send(ctx, when === 'eve' ? `🏠 <b>Завтра, ${FLAT_DAY}-го — оплата квартиры $${FLAT_USD}</b>` : `🏠 <b>Сегодня ${FLAT_DAY}-е — оплата квартиры $${FLAT_USD}</b>\nОплатили?`,
+    [[['✅ Оплатил квартиру', 'flat']]]);
+}
 async function supReminder(env) {
   const ctx = { env, out: [] }; const cfg = await config(ctx, true);
   ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
@@ -1114,6 +1125,12 @@ async function onCallback(ctx, q, again) {
     if (v === 'later') { await store(ctx, { op: 'put', k: 'supUnknown', v: true }); await putSt(ctx, {}); ctx.noTrack = true; await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx); }   // «Позже» → тоже мишка
     await putSt(ctx, { tool: { kind: 'hpsadd' }, await: 'tool' });
     return send(ctx, '🧾 Сколько <b>рублей</b> ушло поставщику на эту заявку? Например <code>1929</code>.', [[BACK]]);
+  }
+  if (k === 'flat') {                                // оплата квартиры → расход Личное / Квартира / Аренда квартиры $400, дальше карта
+    await unkb(ctx, mid);
+    const d = draftFrom(cfg, 'Личное', { type: 'Расход', amount: FLAT_USD, currency: '$' }, '', true);
+    Object.assign(d, { group: 'Квартира', cat: 'Аренда квартиры', cur: '$', comment: 'Оплата квартиры', src: 'кнопка', n: 1, of: 1 });
+    return askNext(ctx, cfg, { d, queue: [] });
   }
   if (k === 'st0') { ctx.editMid = mid; return startScreen(ctx); }
   if (k === 'dbro') {
@@ -1355,7 +1372,7 @@ export class State {
 }
 
 export default {
-  async scheduled(ev, env, ectx) { ectx.waitUntil(ev.cron === '3 18 * * *' ? supReminder(env) : morning(env)); },
+  async scheduled(ev, env, ectx) { ectx.waitUntil(ev.cron === '3 18 * * *' ? supReminder(env).then(() => flatReminder(env, 'eve')) : ev.cron === '31 7 * * *' ? flatReminder(env, 'day') : morning(env)); },
   async fetch(req, env, ectx) {
     const u = new URL(req.url);
     if (u.pathname === '/tg' && req.method === 'POST') {
@@ -1410,6 +1427,7 @@ export default {
       try { return Response.json({ text: u.searchParams.get('t') === 'photo' ? await readReceipt(ctx, bytes) : await transcribe(ctx, bytes), raw: ctx.raw }); }
       catch (e) { return Response.json({ error: String(e && e.stack || e) }); }
     }
+    if (u.pathname === '/flat') { await flatReminder(env, u.searchParams.get('w') || 'day'); return new Response('done'); }
     if (u.pathname === '/morning') { await morning(env); return new Response('done'); }
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
     return new Response('ok');
