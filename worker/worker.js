@@ -856,12 +856,13 @@ async function afterOrder(ctx, cfg, d, id) {
   if (d.type === 'Предоплата') { o.prepay.push(id); if (d.book) o.book = d.book; }
   if (d.type === 'Залог') o.zalog.push(id);
   let ask = false;
+  if (d.type === 'Доход') (o.pay = o.pay || []).push(id);
   if (d.type === 'Доход' && !o.paid) {
     o.paid = true; ask = !o.zalog.length;                // залог уже есть — не спрашиваем
     const items = await openItems(ctx);
     for (const x of items.filter(x => o.prepay.includes(x.id))) {
       const rid = await botRec(ctx, cfg, { dir: 'Аренда PS5', type: 'Доход', group: 'Аренда', cat: 'Предоплата', amount: x.sum, ord: o.id, comment: `Предоплата ${x.id} заказа ${o.id} — клиент приехал` });
-      await setItem(ctx, x, 0, 'подтверждено');
+      await setItem(ctx, x, 0, 'подтверждено'); (o.conv = o.conv || []).push([rid, x.id, x.sum]);
       await send(ctx, `✅ Предоплата ${fmt(x.sum)} по заказу ${o.id} теперь доход (${rid}).`);
     }
   }
@@ -929,7 +930,19 @@ async function dropFromOrders(ctx, id) {
   const m = await getOrds(ctx); let ch = false;
   for (const k of Object.keys(m)) { if (k === '_n') continue; const o = m[k];
     if (o.prepay.includes(id) || o.zalog.includes(id)) { o.prepay = o.prepay.filter(i => i !== id); o.zalog = o.zalog.filter(i => i !== id); ch = true;
-      if (!o.prepay.length && !o.zalog.length && !o.paid) delete m[k]; } }
+      if (!o.prepay.length && !o.zalog.length && !o.paid) delete m[k]; }
+    if ((o.pay || []).includes(id)) { o.pay = o.pay.filter(i => i !== id); ch = true;
+      if (!o.pay.length) {                                  // удалили единственную оплату → клиент снова «не приехал»
+        o.paid = false; o.closed = false;
+        for (const [rid, iid, sum] of o.conv || []) {
+          const [f] = await gas(ctx, [{ op: 'find', sheet: 'Журнал', col: 'A', value: rid }]);
+          if (f.row) await gas(ctx, [{ op: 'set', sheet: 'Журнал', range: `M${f.row}`, values: [['удалено']] }]);
+          const [z] = await gas(ctx, [{ op: 'find', sheet: 'Залоги и предоплаты', col: 'A', value: iid }]);
+          if (z.row) await gas(ctx, [{ op: 'set', sheet: 'Залоги и предоплаты', range: `E${z.row}`, values: [[sum]] }, { op: 'set', sheet: 'Залоги и предоплаты', range: `H${z.row}`, values: [['открыт']] }]);
+        }
+        o.conv = [];
+      } }
+  }
   if (ch) await putOrds(ctx, m);
 }
 
