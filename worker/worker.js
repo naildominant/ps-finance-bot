@@ -941,9 +941,12 @@ async function onCallback(ctx, q) {
     if (a === '0') return nextOrMenu(ctx, cfg, {});
     return askNext(ctx, cfg, { d: rentDraft(cfg, 'Залог', { ord: oid, amount: a === 'x' ? null : Number(a), comment: 'Залог ' + oid }), queue: [] });
   }
-  if (k === 'ac') {
-    const m = await getOrds(ctx); if (m[v]) { m[v].closed = true; await putOrds(ctx, m); }
-    await gone(ctx, mid); return send(ctx, `🏁 Заказ ${v} закрыт.`);
+  if (k === 'ac') {                                  // закрыть заказ можно только когда нет открытых залогов/предоплат
+    const m = await getOrds(ctx), o = m[v]; if (!o) { await gone(ctx, mid); return send(ctx, 'Заказ не найден.', [[BACK]]); }
+    const open = (await openItems(ctx)).filter(x => o.prepay.includes(x.id) || o.zalog.includes(x.id));
+    if (open.length) return send(ctx, `⚠️ В заказе ${o.id} ещё ${open.map(x => `${x.type.toLowerCase()} ${fmt(x.sum)}`).join(' и ')}. Сначала отметьте, что с ними: вернули клиенту, удержали или бронь сгорела. Тогда заказ закроется сам.`, [[BACK]]);
+    o.closed = true; await putOrds(ctx, m);
+    await gone(ctx, mid); return send(ctx, `🏁 Заказ ${o.id} закрыт.`);
   }
   if (k === 'pa') {                                  // предоплата аренды кнопкой суммы → дальше карта и дата брони кнопками
     await gone(ctx, mid);
@@ -1136,6 +1139,11 @@ export default {
       if (z.row) await gas(ctx, [{ op: 'set', sheet: 'Залоги и предоплаты', range: `H${z.row}`, values: [['удалено']] }]);
       await dropFromOrders(ctx, id);
       return Response.json({ journal: f.row || null, items: z.row || null, ords: await getOrds(ctx) });
+    }
+    if (u.pathname === '/ord') {                              // служебное: открыть/закрыть заказ ?id=A1&closed=0|1
+      const ctx = { env, out: [] }; const m = await getOrds(ctx), o = m[u.searchParams.get('id')];
+      if (o) { o.closed = u.searchParams.get('closed') === '1'; await putOrds(ctx, m); }
+      return Response.json(m);
     }
     if (u.pathname === '/ce') {
       const l = await env.KV.list({ prefix: 'ce:' }); const out = {};
