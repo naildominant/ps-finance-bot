@@ -98,3 +98,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - PS SHOP screen: «Закрыл оплату поставщику» removed (owner 26.11); supplier payment via «Долг поставщику» → «✅ Оплатил» (runs закрыл оплату). Text «закрыл оплату» still works.
 - «Назад» (bk, st0): erases like before, but the pressed message is EDITED into the previous screen (ctx.editMid → send() edits in place) — no Telegram delete animation for it. Telegram delete animation itself cannot be disabled.
 - Flat rent $400 on 26th (owner 26.11): reminders 25th 23:03 and 26th 12:31 Tashkent (cron 31 7 * * *), button «✅ Оплатил квартиру» → draft Личное/Расход/Квартира/Аренда квартиры $400 → card → ✅.
+- Order without console mark (legacy A1): client screen shows «Приставка △/✕/□» (free marks) → rs:A#|mark sets it.

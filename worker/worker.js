@@ -1045,6 +1045,10 @@ async function rentScreen(ctx, st) {                        // экран кли
     for (const x of i.zal) rows.push([['↩️ Вернул залог', 'zr:' + x.id], ['✋ Удержал часть', 'zk:' + x.id]]);
     if (!o.paid) for (const x of i.pre) rows.push([['🔥 Бронь сгорела', 'pb:' + x.id]]);
     if (!i.zal.length && !i.pre.length) rows.push([['🏁 Закрыть заказ', 'ac:' + o.id]]);
+    if (!o.ps) {                                          // заказ без значка приставки (старый) — можно проставить
+      const busy = ordList(m).map(x => x.ps).filter(Boolean), free = PS_MARKS.filter(p => !busy.includes(p));
+      if (free.length) rows.push(free.map(p => [`Приставка ${p}`, `rs:${o.id}|${p}`]));
+    }
   }
   rows.push([BACK]);
   return send(ctx, `<b>АРЕНДА ${esc(title)}</b>` + (o && o.paid ? '\nКлиент уже взял приставку — «Оплата» запишется как продление.' : ''), rows);
@@ -1145,6 +1149,11 @@ async function onCallback(ctx, q, again) {
       [[['✍️ Добавить рубли', 'sp:rub']], [['✅ Оплатил', 'supd'], ['Позже', 'st0']]]);
   }
   if (k === 'mr') { await gone(ctx, mid); await putSt(ctx, {}); return monthReport(ctx, v); }
+  if (k === 'rs') {                                  // проставить значок приставки существующему заказу
+    const [oid, p] = v.split('|'); const m = await getOrds(ctx);
+    if (m[oid] && !ordList(m).some(o => o.ps === p)) { m[oid].ps = p; await putOrds(ctx, m); }
+    ctx.editMid = mid; const nst = { dir: 'Аренда PS5', ord: oid }; await putSt(ctx, nst); return rentScreen(ctx, nst);
+  }
   if (k === 'ro' || k === 'rp') {                    // выбран клиент / приставка нового клиента
     await gone(ctx, mid);
     if (k === 'ro' && v === 'new') return rentConsole(ctx);
