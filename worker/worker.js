@@ -392,7 +392,7 @@ const PS_RESERVE = 0;                                      // резерв PS SH
 // служебные категории — не на кнопках (бот ставит их сам): оплата поставщику, доход по умолчанию, проценты
 const HIDDEN_GROUPS = ['Поставщик', 'Продажа', 'Проценты по вкладу'];
 // цвета кнопок категорий (владелец 27.11: «чтобы не смешивались») — соседние разные
-const CAT_STYLE = { 'Игры PS4': 'primary', 'Подписка': 'success', 'GTA 6': 'danger', 'Чистка PlayStation': 'primary', 'Аксессуары': 'success', 'Консоль': 'danger', 'Игры PS5': 'primary',
+const CAT_STYLE = { 'Игры PS5': 'success', 'Игры PS4': 'primary', 'GTA 6': 'primary', 'Чистка PlayStation': 'success', 'Аксессуары': 'danger', 'Консоль': 'danger', 'Подписка': 'success',
   'OLX': 'success', 'Instagram': 'danger', 'Telegram': 'primary', 'Непредвиденные': 'danger' };
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
 const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };   // долги и «Назад» → СТАРТ (владелец 26.11)
@@ -1154,9 +1154,13 @@ async function onCallback(ctx, q, again) {
     if (T === 'Доход' || T === 'Расход') {               // сразу кнопки категорий: можно нажать или сказать голосом (владелец 27.11)
       const gs = [...new Set(cfg.cats.filter(c => c.dir === dir && c.kind === T && !HIDDEN_GROUPS.includes(c.group)).map(c => c.group))];
       const btn = (g, i) => [g, 'pg:' + i, CAT_STYLE[g]];
-      let rows = chunk(gs.map(btn).filter(b => b[0] !== 'Игры PS5'), 2);   // «Игры PS5» — большая кнопка в самом низу (владелец 27.11)
-      const ps5 = gs.indexOf('Игры PS5'); if (ps5 >= 0) rows.push([btn('Игры PS5', ps5)]);
-      return send(ctx, `<b>${T === 'Доход' ? '➕ Доход' : '➖ Расход'}</b>`, [...rows, [BACK]]);
+      // порядок кнопок дохода PS SHOP (владелец 27.11): главная — «Подписка», большая внизу
+      const ORDER = ['Игры PS5', 'Игры PS4', 'GTA 6', 'Чистка PlayStation', 'Аксессуары', 'Консоль'], MAIN = 'Подписка';
+      const list = gs.map(btn).sort((a, b) => (ORDER.indexOf(a[0]) + 1 || 99) - (ORDER.indexOf(b[0]) + 1 || 99));
+      const rows = chunk(list.filter(b => b[0] !== MAIN), 2);
+      const mi = gs.indexOf(MAIN); if (mi >= 0) rows.push([btn(MAIN, mi)]);
+      const sign = T === 'Доход' ? '<tg-emoji emoji-id="5253652327734192243">➕</tg-emoji>' : '<tg-emoji emoji-id="5255775038010829248">➖</tg-emoji>';
+      return send(ctx, `${sign} <b>${T}</b>`, [...rows, [BACK]]);
     }
     return send(ctx, hint, [[BACK]]);
   }
