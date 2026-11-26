@@ -362,6 +362,7 @@ async function doneMark(ctx, type) {
   if (DONE_STICKER[type]) return tg(ctx, 'sendSticker', { chat_id: ctx.chat, sticker: DONE_STICKER[type] });
   if (DONE_EMO[type]) return send(ctx, `<tg-emoji emoji-id="${DONE_EMO[type]}">💸</tg-emoji>`);
 }
+const TEST_WIPE = true;                                   // /start стирает чат — только на время теста (выключить на запуске)
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
 const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['📄 Открыть таблицу', SHEET_URL]]]); };
 
@@ -734,7 +735,20 @@ async function onMessage(ctx, m) {
   if (m.sticker && m.sticker.custom_emoji_id) ce.push({ custom_emoji_id: m.sticker.custom_emoji_id });   // id премиум-эмодзи владельца (для меню)
   if (ce.length && !ctx.dry) for (const e of ce) await ctx.env.KV.put('ce:' + e.custom_emoji_id, JSON.stringify({ text, at: Date.now() }));
   if (ce.length && !text.replace(/[\s\u{FE0F}\u{200D}\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{2B05}-\u{2B07}\u{2190}-\u{21FF}]/gu, '')) return send(ctx, 'Эмодзи запомнил 👌');
-  if (/^\/(start|menu)$/i.test(text) || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
+  if (/^\/start$/i.test(text)) {                           // /start: стереть всё выше и показать СТАРТ (владелец 26.11, на время теста)
+    await putSt(ctx, {});
+    if (TEST_WIPE && !ctx.dry) {
+      const from = Math.max(1, ((await store(ctx, { op: 'get', k: 'wipeFrom' })) || m.message_id - 1000));
+      for (let hi = m.message_id; hi >= from; hi -= 100) {
+        const ids = []; for (let i = hi; i > Math.max(from - 1, hi - 100); i--) ids.push(i);
+        await tg(ctx, 'deleteMessages', { chat_id: ctx.chat, message_ids: ids }).catch(() => {});
+      }
+      await store(ctx, { op: 'put', k: 'wipeFrom', v: m.message_id });
+      await store(ctx, { op: 'put', k: 'trail', v: [] }); ctx.trail = [];
+    }
+    return startScreen(ctx);
+  }
+  if (/^\/menu$/i.test(text) || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
   if (m.voice || m.audio || m.video_note) {
     const f = m.voice || m.audio || m.video_note;
     const said = await transcribe(ctx, await tgFile(ctx, f.file_id));
