@@ -339,6 +339,16 @@ async function askNext(ctx, cfg, st) {
   if (d.type === 'Между своими' && !d.from) return void await askCard(ctx, cfg, st, 'from', 'С какой карты?');
   if (d.type === 'Между своими' && !d.to) return void await askCard(ctx, cfg, st, 'to', 'На какую карту?');
   if (isOut(d.type) && !d.from) return void await askCard(ctx, cfg, st, 'from', '💳 С какой карты или наличными?');
+  if (d.dir === 'Аренда PS5' && !d.edit && ['Предоплата', 'Залог', 'Доход'].includes(d.type) && (!d.ord || (d.ord === 'new' && !d.ps))) {
+    // аренда всегда привязана к клиенту = приставке △ ✕ □ (владелец 26.11); занятые приставки (открытые заказы) нового клиента не получают
+    const m = await getOrds(ctx), items = await openItems(ctx), os = ordList(m);
+    const busy = os.map(o => o.ps).filter(Boolean), free = PS_MARKS.filter(p => !busy.includes(p));
+    const rows = [];
+    if (!d.ord) for (const o of os) rows.push([[ordInfo(o, items).label, 'cord:' + o.id]]);
+    if (free.length) rows.push(free.map(p => [`🆕 ${p}`, 'cps:' + p]));
+    st.await = null; await putSt(ctx, st);
+    return void await send(ctx, d.ord ? '🎮 <b>Новый клиент: какая приставка?</b>' : '🎮 <b>Какой клиент (приставка)?</b>' + (free.length ? '' : '\nСвободных приставок нет.'), withBack(rows));
+  }
   if (d.type === 'Предоплата' && d.dir === 'Аренда PS5' && !d.to) { const c = cardByWord(cfg, 'Капитал'); if (c) d.to = c.name; }   // предоплата аренды всегда на Капитал (владелец 26.11)
   if (isIn(d.type) && !d.to) return void await askCard(ctx, cfg, st, 'to', '💳 На какую карту пришли деньги?');
   if (d.type === 'Предоплата' && !d.book) { st.await = 'book'; await putSt(ctx, st);
@@ -1243,6 +1253,8 @@ async function onCallback(ctx, q, again) {
     return q.message.text && q.message.text.includes('Выберите дату брони') ? edit(ctx, mid, txt, await calendar(ctx, v)) : (await gone(ctx, mid), send(ctx, txt, await calendar(ctx, v)));
   }
   if (k === 'cd' && d) { d.book = v; await gone(ctx, mid); return reshow(ctx, st); }
+  if (k === 'cord' && d) { d.ord = v; await gone(ctx, mid); return askNext(ctx, cfg, st); }
+  if (k === 'cps' && d) { d.ord = 'new'; d.ps = v; await gone(ctx, mid); return askNext(ctx, cfg, st); }
   if (k === 'bd') { d.book = shiftYmd(todayYmd(), Number(v)); await gone(ctx, mid); return reshow(ctx, st); }
   if (k === 'dt') { d.date = v === '0' ? todayYmd() : shiftYmd(todayYmd(), -Number(v)); await gone(ctx, mid); return reshow(ctx, st); }
   if (k === 'no') { await gone(ctx, mid); return nextOrMenu(ctx, cfg, st); }
