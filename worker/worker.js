@@ -21,7 +21,7 @@ async function tg(ctx, method, body) {
 const ICON = { 'Закрыл оплату поставщику ✅': ['Закрыл оплату поставщику', '5465154027970908359'], '+': [' ', '5253652327734192243'], '−': [' ', '5255775038010829248'], '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
   'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['Leadex', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
 // цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
-const STYLE = { 'Поступление': 'success', 'Сегодня': 'primary', 'Завтра': 'primary', 'Послезавтра': 'primary', 'Другая дата': 'primary', 'Предоплата': 'success', 'Залог': 'primary', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
+const STYLE = { 'Оплата': 'success', 'Сегодня': 'primary', 'Завтра': 'primary', 'Послезавтра': 'primary', 'Другая дата': 'primary', 'Предоплата': 'primary', 'Залог': 'danger', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
 const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data, style]) => {
   const b = ICON[text] ? { text: ICON[text][0], icon_custom_emoji_id: ICON[text][1] } : { text };
   if (style || STYLE[text]) b.style = style || STYLE[text];
@@ -850,7 +850,7 @@ async function rentPick(ctx, kind) {                        // список от
   const m = await getOrds(ctx), items = await openItems(ctx);
   const os = ordList(m).filter(o => kind === 'zl' || kind === 'in' ? true : true);
   const rows = os.map(o => [[ordInfo(o, items).label, `ao:${kind}|${o.id}`]]);
-  const title = kind === 'in' ? '💵 <b>Поступление: какой заказ?</b>' : '🔐 <b>Залог: какой заказ?</b>';
+  const title = kind === 'in' ? '💵 <b>Оплата: какой заказ?</b>' : '🔐 <b>Залог: какой заказ?</b>';
   rows.push([[kind === 'in' ? '🆕 Без предоплаты' : '🆕 Новый заказ', `ao:${kind}|new`]], [BACK]);
   return send(ctx, title + (os.length ? '' : '\nОткрытых заказов нет.'), rows);
 }
@@ -960,7 +960,7 @@ async function onCallback(ctx, q) {
     const extra = dir === 'PS SHOP' ? [[['Закрыл оплату поставщику ✅', 'sup']]] : [];
     extra.push([BACK]);                                   // назад в главное меню
     if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [extra[0], [['+', 'pt:+'], ['−', 'pt:-']], ...extra.slice(1)]);
-    if (dir === 'Аренда PS5') return send(ctx, '<b>АРЕНДА ?</b>', [[['Поступление', 'ar:in']], [['Предоплата', 'pt:pre'], ['Залог', 'ar:zl']], [['📋 Заказы', 'ar:list']], [BACK]]);
+    if (dir === 'Аренда PS5') return send(ctx, '<b>АРЕНДА ?</b>', [[['Оплата', 'ar:in']], [['Предоплата', 'pt:pre'], ['Залог', 'ar:zl']], [['📋 Заказы', 'ar:list']], [BACK]]);
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
   if (k === 'bk' && st.tool) { await gone(ctx, mid); await putSt(ctx, {}); return dirMenu(ctx); }
