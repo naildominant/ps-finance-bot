@@ -1005,7 +1005,10 @@ async function onCallback(ctx, q, again) {
   if (k === 'ap') { await gone(ctx, mid); return askNext(ctx, cfg, { d: rentDraft(cfg, 'Доход', { ord: v, group: 'Аренда', cat: 'Продление', comment: 'Продление ' + v }), queue: [] }); }
   if (k === 'zg') {                                  // залог после оплаты
     const [oid, a] = v.split('|'); await gone(ctx, mid);
-    if (a === '0') return nextOrMenu(ctx, cfg, {});
+    if (a === '0') {
+      if (await store(ctx, { op: 'get', k: 'pendShare' })) { await store(ctx, { op: 'put', k: 'pendShare', v: false }); ctx.noTrack = true; await rentShare(ctx, cfg); ctx.noTrack = false; }
+      return nextOrMenu(ctx, cfg, {});
+    }
     return askNext(ctx, cfg, { d: rentDraft(cfg, 'Залог', { ord: oid, amount: a === 'x' ? null : Number(a), comment: 'Залог ' + oid }), queue: [] });
   }
   if (k === 'ac') {                                  // закрыть заказ можно только когда нет открытых залогов/предоплат
@@ -1078,7 +1081,11 @@ async function onCallback(ctx, q, again) {
       ctx.keep = [mid]; ctx.noTrack = true;            // запись и расчёты после неё остаются в чате
       { const t = (await store(ctx, { op: 'get', k: 'trail' })) || []; await store(ctx, { op: 'put', k: 'trail', v: t.filter(i => i !== mid) }); ctx.trail = ctx.trail.filter(i => i !== mid); }
       const waitZ = !d.edit && d.ord ? await afterOrder(ctx, cfg, d, id) : false;
-      if (!d.edit && d.dir === 'Аренда PS5' && (d.type === 'Доход' || d.type === 'Расход')) await rentShare(ctx, cfg);
+      if (!d.edit && d.dir === 'Аренда PS5' && (d.type === 'Доход' || d.type === 'Расход')) {
+        if (waitZ) await store(ctx, { op: 'put', k: 'pendShare', v: true });   // расчёт с братом — после ответа про залог (владелец 26.11)
+        else await rentShare(ctx, cfg);
+      }
+      if (!d.edit && d.type === 'Залог' && await store(ctx, { op: 'get', k: 'pendShare' })) { await store(ctx, { op: 'put', k: 'pendShare', v: false }); await rentShare(ctx, cfg); }
       if (waitZ && !(st.queue && st.queue.length)) { if (DONE_EMO[d.type]) await send(ctx, `<tg-emoji emoji-id="${DONE_EMO[d.type]}">💸</tg-emoji>`); ctx.noTrack = false; await putSt(ctx, {}); return; }   // ждём ответ про залог
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
         const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
