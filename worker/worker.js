@@ -1178,9 +1178,9 @@ async function onCallback(ctx, q, again) {
     await gone(ctx, mid);
     if (st.pending) return startDraft(ctx, cfg, dir, st.pending);
     await putSt(ctx, { dir });
-    const extra = dir === 'PS SHOP' ? [[['Закрыл оплату поставщику ✅', 'sup']]] : [];
+    const extra = [];                                       // «Закрыл оплату» убран (владелец 26.11): оплата — через «Долг поставщику» на СТАРТ
     extra.push([BACK]);                                   // назад в главное меню
-    if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [extra[0], [['+', 'pt:+'], ['−', 'pt:-']], ...extra.slice(1)]);
+    if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [[['+', 'pt:+'], ['−', 'pt:-']], ...extra]);
     if (dir === 'Аренда PS5') return rentStart(ctx);
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
