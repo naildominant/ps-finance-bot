@@ -80,3 +80,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - 26.11: test rent clients deleted: R15 (A3 payment), R16 (its 40% share), R18 (A4 prepay); A3 closed, A4 removed. Z1 real залог was returned by owner (R17) → A1 closed.
 - Balance order/labels (owner 26.11): groups [⭐ Основные: ГЛАВНАЯ(Приёмка), APPLE PAY(Узум 9028)] [ПОСТАВЩИК, АРЕНДНАЯ(Капитал)] [, НАЛ, BULKA CARD, PSРАСХОДЫ(Расходка), ИПАК, ДОЛЛАРЫ, ВКЛАД; Арс hidden (brother sees it).
 - Rent prepayment card fixed = Капитал (АРЕНДНАЯ), not asked (owner 26.11).
+- Mixed amounts (owner 26.11): amount answer «100$ и 500 к» / «$100 + 500000» → parseAmounts → separate drafts in queue (n of N), same order; $ income card auto = Доллары. parseAmount accepts leading $ and «бакс».

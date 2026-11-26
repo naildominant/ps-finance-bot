@@ -111,11 +111,19 @@ function parseDate(s) {
 const fmt = n => Math.round(n).toLocaleString('ru-RU').replace(/ /g, ' ');
 function parseAmount(s) {
   s = String(s).toLowerCase().replace(/\s/g, '').replace(',', '.');
-  const m = s.match(/^(\d+(?:\.\d+)?)(к|k|тыс|тысяч|т|млн|м|mln)?(\$|сум|сумов|долл.*)?$/);
+  let pre = false; if (s.startsWith('$')) { pre = true; s = s.slice(1); }   // «$50»
+  const m = s.match(/^(\d+(?:\.\d+)?)(к|k|тыс|тысяч|т|млн|м|mln)?(\$|сум|сумов|сумм|долл.*|бакс.*)?$/);
   if (!m) return null;
+  if (pre) m[3] = '$';
   let n = Number(m[1]); const mul = m[2] || '';
   if (/^(к|k|тыс|тысяч|т)$/.test(mul)) n *= 1e3; if (/^(млн|м|mln)$/.test(mul)) n *= 1e6;
-  return { amount: n, cur: m[3] && /\$|долл/.test(m[3]) ? '$' : null };
+  return { amount: n, cur: m[3] && /\$|долл|бакс/.test(m[3]) ? '$' : null };
+}
+// несколько сумм в одном ответе: «100$ и 500к», «$100 + 500000» → [{amount, cur}, …]
+function parseAmounts(s) {
+  const parts = String(s).split(/\s+и\s+|\+|;|,\s+/).map(x => x.trim()).filter(Boolean);
+  const out = parts.map(parseAmount);
+  return out.length > 1 && out.every(Boolean) ? out : null;
 }
 
 // ---------- Голос и фото ----------
@@ -707,9 +715,20 @@ async function onMessage(ctx, m) {
   if (st.await === 'tool' && st.tool) return onToolText(ctx, cfg, st, text);
   if (/закрыл[а-я]*\s+(оплат|поставщ)/i.test(text)) return closeSupplier(ctx, cfg);
   if (st.await === 'amount' && st.d) {
+    const many = parseAmounts(text);
+    if (many) {                                            // оплата частями: доллары и сумы → отдельные записи по очереди
+      remember(st);
+      const base = JSON.parse(JSON.stringify(st.d)), of = many.length;
+      const mk = (a, i) => { const d = JSON.parse(JSON.stringify(base)); d.amount = a.amount; d.cur = a.cur || 'сум'; d.n = i + 1; d.of = of;
+        if (d.cur === '$' && isIn(d.type)) { const c = cardByWord(cfg, 'Доллары'); if (c) d.to = c.name; } return d; };
+      st.d = mk(many[0], 0); st.queue = [...many.slice(1).map((a, i) => mk(a, i + 1)), ...(st.queue || [])];
+      await send(ctx, `Записываю ${of} части по очереди: ${many.map(a => a.cur === '$' ? '$' + fmt(a.amount) : fmt(a.amount) + ' сум').join(' и ')}.`);
+      return askNext(ctx, cfg, st);
+    }
     const a = parseAmount(text); if (a) remember(st);
     if (!a) return send(ctx, 'Не понял сумму. Напишите только число, например <code>150000</code> или <code>$50</code>.');
     st.d.amount = a.amount; if (a.cur) st.d.cur = a.cur; st.d.cur = st.d.cur || 'сум';
+    if (st.d.cur === '$' && isIn(st.d.type) && !st.d.to) { const c = cardByWord(cfg, 'Доллары'); if (c) st.d.to = c.name; }
     return reshow(ctx, st);
   }
   if (st.await === 'book' && st.d) {
@@ -1051,6 +1070,7 @@ async function onCallback(ctx, q, again) {
       if (!d.edit && d.ord === 'new') {                   // новый заказ аренды
         const m = await getOrds(ctx); const oid = 'A' + (++m._n);
         m[oid] = { id: oid, ps: d.ps || '', book: '', prepay: [], zalog: [], paid: false, closed: false, at: Date.now() }; await putOrds(ctx, m); d.ord = oid;
+        for (const qd of st.queue || []) if (qd.ord === 'new') qd.ord = oid;   // остальные части той же оплаты — в этот же заказ
       }
       const id = await save(ctx, cfg, d);
       await edit(ctx, mid, `✅ Записано · ${id}${d.ord && !d.edit ? ' · заказ ' + d.ord : ''}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
@@ -1058,7 +1078,7 @@ async function onCallback(ctx, q, again) {
       { const t = (await store(ctx, { op: 'get', k: 'trail' })) || []; await store(ctx, { op: 'put', k: 'trail', v: t.filter(i => i !== mid) }); ctx.trail = ctx.trail.filter(i => i !== mid); }
       const waitZ = !d.edit && d.ord ? await afterOrder(ctx, cfg, d, id) : false;
       if (!d.edit && d.dir === 'Аренда PS5' && (d.type === 'Доход' || d.type === 'Расход')) await rentShare(ctx, cfg);
-      if (waitZ) { if (DONE_EMO[d.type]) await send(ctx, `<tg-emoji emoji-id="${DONE_EMO[d.type]}">💸</tg-emoji>`); ctx.noTrack = false; await putSt(ctx, {}); return; }   // ждём ответ про залог
+      if (waitZ && !(st.queue && st.queue.length)) { if (DONE_EMO[d.type]) await send(ctx, `<tg-emoji emoji-id="${DONE_EMO[d.type]}">💸</tg-emoji>`); ctx.noTrack = false; await putSt(ctx, {}); return; }   // ждём ответ про залог
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
         const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
         await leadexSplit(ctx, cfg, id, uzs);
