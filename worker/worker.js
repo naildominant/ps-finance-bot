@@ -112,11 +112,11 @@ const fmt = n => Math.round(n).toLocaleString('ru-RU').replace(/ /g, ' ');
 function parseAmount(s) {
   s = String(s).toLowerCase().replace(/\s/g, '').replace(',', '.');
   let pre = false; if (s.startsWith('$')) { pre = true; s = s.slice(1); }   // «$50»
-  const m = s.match(/^(\d+(?:\.\d+)?)(к|k|тыс|тысяч|т|млн|м|mln)?(\$|сум|сумов|сумм|долл.*|бакс.*)?$/);
+  const m = s.match(/^(\d+(?:\.\d+)?)(к|k|тыс[а-я]*|т|косар[а-я]*|млн|миллион[а-я]*|лям[а-я]*|лимон[а-я]*|м|mln)?(\$|сум|сумов|сумм|долл.*|бакс.*)?$/);
   if (!m) return null;
   if (pre) m[3] = '$';
   let n = Number(m[1]); const mul = m[2] || '';
-  if (/^(к|k|тыс|тысяч|т)$/.test(mul)) n *= 1e3; if (/^(млн|м|mln)$/.test(mul)) n *= 1e6;
+  if (/^(к|k|тыс|т|косар)/.test(mul)) n *= 1e3; if (/^(млн|миллион|лям|лимон|м$|mln)/.test(mul)) n *= 1e6;
   return { amount: n, cur: m[3] && /\$|долл|бакс/.test(m[3]) ? '$' : null };
 }
 // несколько сумм в одном ответе: «100$ и 500к», «$100 + 500000» → [{amount, cur}, …]
@@ -724,7 +724,9 @@ async function onMessage(ctx, m) {
       await send(ctx, `Записываю ${of} части по очереди: ${many.map(a => a.cur === '$' ? '$' + fmt(a.amount) : fmt(a.amount) + ' сум').join(' и ')}.`);
       return askNext(ctx, cfg, st);
     }
-    const a = parseAmount(text); if (a) remember(st);
+    let a = parseAmount(text);
+    if (!a) try { const r = await aiParse(ctx, cfg, st.d.dir, text); if (r[0] && r[0].amount > 0) a = { amount: r[0].amount, cur: r[0].currency === '$' ? '$' : null }; } catch (e) {}   // «пятьсот тысяч», «полтора ляма»
+    if (a) remember(st);
     if (!a) return send(ctx, 'Не понял сумму. Напишите только число, например <code>150000</code> или <code>$50</code>.');
     st.d.amount = a.amount; if (a.cur) st.d.cur = a.cur; st.d.cur = st.d.cur || 'сум';
     if (st.d.cur === '$' && isIn(st.d.type) && !st.d.to) { const c = cardByWord(cfg, 'Доллары'); if (c) st.d.to = c.name; }
