@@ -81,3 +81,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - Balance order/labels (owner 26.11): groups [⭐ Основные: ГЛАВНАЯ(Приёмка), APPLE PAY(Узум 9028)] [ПОСТАВЩИК, АРЕНДНАЯ(Капитал)] [, НАЛ, BULKA CARD, PSРАСХОДЫ(Расходка), ИПАК, ДОЛЛАРЫ, ВКЛАД; Арс hidden (brother sees it).
 - Rent prepayment card fixed = Капитал (АРЕНДНАЯ), not asked (owner 26.11).
 - Mixed amounts (owner 26.11): amount answer «100$ и 500 к» / «$100 + 500000» → parseAmounts → separate drafts in queue (n of N), same order; $ income card auto = Доллары. parseAmount accepts leading $ and «бакс».
+- Brother share message (owner 26.11): short — «👤 Брату перевести: X» + «60% прибыли, уже отдано Y» + «🧡 Ваши 40%: +добавка → Личное» (owner understands it's the increment).
