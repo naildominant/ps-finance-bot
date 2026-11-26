@@ -389,9 +389,9 @@ async function askCard(ctx, cfg, st, side, q) {
 }
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
 // эмодзи владельца после записи (владелец 26.11): расход — 💸; доход — 🤑
-const DONE_EMO = { 'Расход': '5319172285762919855', 'Доход': '5391292736647209211' };
+const DONE_EMO = { 'Расход': '5319172285762919855', 'Дал в долг': '5319172285762919855', 'Вложение': '5319172285762919855', 'Доход': '5391292736647209211' };
 // доход — стикер владельца (мишка 🤑, 26.11); расход — премиум-эмодзи 💸
-const DONE_STICKER = { 'Доход': 'CAACAgIAAxkBAAICTWsHvj9ZVbXwLGJB0WpnrKZMTRiYAAIEAQAC9wLIDyAPdzvpq8hJPQQ' };
+const DONE_STICKER = { 'Доход': 'CAACAgIAAxkBAAICTWsHvj9ZVbXwLGJB0WpnrKZMTRiYAAIEAQAC9wLIDyAPdzvpq8hJPQQ', 'Возврат долга': 'CAACAgIAAxkBAAICTWsHvj9ZVbXwLGJB0WpnrKZMTRiYAAIEAQAC9wLIDyAPdzvpq8hJPQQ' };
 async function doneMark(ctx, type) {
   if (DONE_STICKER[type]) return tg(ctx, 'sendSticker', { chat_id: ctx.chat, sticker: DONE_STICKER[type] });
   if (DONE_EMO[type]) return send(ctx, `<tg-emoji emoji-id="${DONE_EMO[type]}">💸</tg-emoji>`);
@@ -719,12 +719,12 @@ async function supplierDone(ctx, cfg, card, left) {
     `<b>Чистая прибыль PS SHOP с прошлого расчёта:</b>`, `поступления ${fmt(income)} − поставщику ${fmt(supPaid)} − на Расходку ${fmt(toExp)} = <b>${fmt(net)}</b>`];
   if (!ctx.dry) await store(ctx, { op: 'put', k: 'psLast', v: Date.now() });
   if (net <= 0) { L.push('', 'Прибыли нет — доли не начисляю.');
-    return send(ctx, L.join('\n')); }
+    await send(ctx, L.join('\n')); await doneMark(ctx, 'Расход'); return startScreen(ctx); }   // оплата поставщику = расход → 💸
   const mine = Math.round(net * (1 - PS_RESERVE)), res = net - mine;
   const nid = await botRec(ctx, cfg, { dir: 'Личное', type: 'Доход', group: 'Доля из PS SHOP (80%)', cat: 'Доля из PS SHOP (80%)', amount: mine, comment: `Прибыль PS SHOP ${Math.round((1 - PS_RESERVE) * 100)}% по расчёту ` + sid });
   await gas(ctx, [{ op: 'set', sheet: 'Доли', range: 'K5:Q5', values: [['PS SHOP: дата', 'Поступления', 'Поставщику', 'На Расходку', 'Чистая прибыль', 'Наилю 80%', 'Резерв 20%']] },
     { op: 'append', sheet: 'Доли', row: ['', '', '', '', '', '', '', '', '', '', { d: Date.now() }, income, supPaid, toExp, net, mine, res] }]);
-  if (!res) { L.push('', `• Вся прибыль вам: <b>${fmt(mine)}</b> — записал в «Личное» (${nid})`); await send(ctx, L.join('\n')); return startScreen(ctx); }
+  if (!res) { L.push('', `• Вся прибыль вам: <b>${fmt(mine)}</b> — записал в «Личное» (${nid})`); await send(ctx, L.join('\n')); await doneMark(ctx, 'Расход'); return startScreen(ctx); }
   await store(ctx, { op: 'put', k: 'res:' + sid, v: { amount: res } });
   L.push('', `• Вам ${Math.round((1 - PS_RESERVE) * 100)}%: <b>${fmt(mine)}</b> — записал в «Личное» (${nid})`, `• В резерв ${Math.round(PS_RESERVE * 100)}%: <b>${fmt(res)}</b>`);
   return send(ctx, L.join('\n'), [[['✅ Перевёл в резерв', 'rsv:' + sid], ['Позже', 'rsvl:' + sid]]]);
