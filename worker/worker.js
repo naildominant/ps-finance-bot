@@ -396,12 +396,17 @@ async function onTool(ctx, q) {
     await gone(ctx, mid);
     await putSt(ctx, {});                                   // «Баланс» только показывает остатки (владелец 26.11); исправление — не здесь
     const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
-    const rows = g.values.filter(r => r[0] && r[2]);
+    // порядок и подписи (владелец 26.11); карту брата не показываем — её смотрит брат
+    const ORDER = [['Приёмка', 'ГЛАВНАЯ'], ['Поставщик', 'ПОСТАВЩИК'], ['Узум', 'APPLE PAY'], ['Капитал', 'АРЕНДНАЯ'], ['Нал', 'НАЛ'],
+      ['Булка', 'BULKA CARD'], ['Расходка', 'PSРАСХОДЫ'], ['Ипак', 'ИПАК'], ['Доллары', 'ДОЛЛАРЫ'], ['UZUM вклад', 'ВКЛАД']];
+    const all = g.values.filter(r => r[0] && r[2] && !/^Арс/.test(r[0]));
+    const rows = [...ORDER.map(([w, t]) => { const r = all.find(r => String(r[0]).startsWith(w)); return r && { r, t }; }).filter(Boolean),
+      ...all.filter(r => !ORDER.some(([w]) => String(r[0]).startsWith(w))).map(r => ({ r, t: r[0] }))];
     let tot = 0, alien = 0, n = 0; const L = ['<b>💳 Баланс по картам</b>', ''];
-    for (const r of rows) {
-      const v = Number(r[8]) || 0, j = Number(r[9]) || 0, usd = r[2] === '$', bro = /^Арс/.test(r[0]);
-      L.push(`${++n}. ${r[0]}\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}${bro ? ' — деньги брата' : ''}`, '');
-      if (!usd && !bro) { tot += v; alien += j; }
+    for (const { r, t } of rows) {
+      const v = Number(r[8]) || 0, j = Number(r[9]) || 0, usd = r[2] === '$', sub = (String(r[0]).match(/\((.*)\)/) || [])[1];
+      L.push(`${++n}. <b>${esc(t)}</b>${sub ? ` · ${esc(sub)}` : ''}\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}`, '');
+      if (!usd) { tot += v; alien += j; }
     }
     L.push('━━━━━━━━━━', `Всего в сумах: <b>${fmt(tot)}</b>`); if (alien) L.push(`Из них мои: <b>${fmt(tot - alien)}</b>`);
     return send(ctx, L.join('\n'), [[BACK]]);
