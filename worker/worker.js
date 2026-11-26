@@ -1025,7 +1025,10 @@ async function onCallback(ctx, q, again) {
   if (k === 'zg') {                                  // залог после оплаты
     const [oid, a] = v.split('|'); await gone(ctx, mid);
     if (a === '0') {
-      if (await store(ctx, { op: 'get', k: 'pendShare' })) { await store(ctx, { op: 'put', k: 'pendShare', v: false }); ctx.noTrack = true; await rentShare(ctx, cfg); ctx.noTrack = false; }
+      if (await store(ctx, { op: 'get', k: 'pendShare' })) {   // залога нет → расчёт с братом и итоговый стикер
+        await store(ctx, { op: 'put', k: 'pendShare', v: false }); ctx.noTrack = true; await rentShare(ctx, cfg);
+        await doneMark(ctx, (await store(ctx, { op: 'get', k: 'pendDone' })) || 'Доход'); await store(ctx, { op: 'put', k: 'pendDone', v: null }); ctx.noTrack = false;
+      }
       return nextOrMenu(ctx, cfg, {});
     }
     return askNext(ctx, cfg, { d: rentDraft(cfg, 'Залог', { ord: oid, amount: a === 'x' ? null : Number(a), comment: 'Залог ' + oid }), queue: [] });
@@ -1099,18 +1102,27 @@ async function onCallback(ctx, q, again) {
       await edit(ctx, mid, `✅ Записано · ${id}${d.ord && !d.edit ? ' · заказ ' + d.ord : ''}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
       ctx.keep = [mid]; ctx.noTrack = true;            // запись и расчёты после неё остаются в чате
       { const t = (await store(ctx, { op: 'get', k: 'trail' })) || []; await store(ctx, { op: 'put', k: 'trail', v: t.filter(i => i !== mid) }); ctx.trail = ctx.trail.filter(i => i !== mid); }
+      // Аренда (владелец 26.11): пока не ответили «Залог взяли?» — ни расчёта с братом, ни стикера, ни меню
       const waitZ = !d.edit && d.ord ? await afterOrder(ctx, cfg, d, id) : false;
-      if (!d.edit && d.dir === 'Аренда PS5' && (d.type === 'Доход' || d.type === 'Расход')) {
-        if (waitZ) await store(ctx, { op: 'put', k: 'pendShare', v: true });   // расчёт с братом — после ответа про залог (владелец 26.11)
-        else await rentShare(ctx, cfg);
+      const pend = !d.edit && (waitZ || (d.ord && (await store(ctx, { op: 'get', k: 'pendShare' })) === d.ord));   // ждём ответ по этому же заказу
+      const rentMoney = !d.edit && d.dir === 'Аренда PS5' && (d.type === 'Доход' || d.type === 'Расход');
+      if (rentMoney && pend && d.type !== 'Залог') {
+        await store(ctx, { op: 'put', k: 'pendShare', v: d.ord }); await store(ctx, { op: 'put', k: 'pendDone', v: d.type });
+        ctx.noTrack = false;
+        if (st.queue && st.queue.length) return nextOrMenu(ctx, cfg, st);   // следующая часть той же оплаты
+        await putSt(ctx, {}); return;                                     // ждём ответ про залог
       }
-      if (!d.edit && d.type === 'Залог' && await store(ctx, { op: 'get', k: 'pendShare' })) { await store(ctx, { op: 'put', k: 'pendShare', v: false }); await rentShare(ctx, cfg); }
-      if (waitZ && !(st.queue && st.queue.length)) { await doneMark(ctx, d.type); ctx.noTrack = false; await putSt(ctx, {}); return; }   // ждём ответ про залог
+      if (rentMoney) await rentShare(ctx, cfg);
+      let mark = d.type;
+      if (!d.edit && d.type === 'Залог' && d.ord && (await store(ctx, { op: 'get', k: 'pendShare' })) === d.ord) {   // залог записан → теперь расчёт и итог
+        await store(ctx, { op: 'put', k: 'pendShare', v: false }); await rentShare(ctx, cfg);
+        mark = (await store(ctx, { op: 'get', k: 'pendDone' })) || mark; await store(ctx, { op: 'put', k: 'pendDone', v: null });
+      }
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
         const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
         await leadexSplit(ctx, cfg, id, uzs);
       }
-      if (!d.edit) await doneMark(ctx, d.type);         // один раз в конце записи
+      if (!d.edit) await doneMark(ctx, mark);           // один раз в самом конце
       ctx.noTrack = false; return nextOrMenu(ctx, cfg, st);
     } catch (e) { return edit(ctx, mid, summary(d) + '\n\n⚠️ Не получилось записать: ' + e.message, [[['✅ Ещё раз', 'ok'], ['❌ Отменить', 'no']]]); }
   }
@@ -1233,6 +1245,11 @@ export default {
       if (z.row) await gas(ctx, [{ op: 'set', sheet: 'Залоги и предоплаты', range: `H${z.row}`, values: [['удалено']] }]);
       await dropFromOrders(ctx, id);
       return Response.json({ journal: f.row || null, items: z.row || null, ords: await getOrds(ctx) });
+    }
+    if (u.pathname === '/ordreset') {                         // служебное: пересобрать заказы из открытых залогов/предоплат
+      const ctx = { env, out: [] }; await store(ctx, { op: 'put', k: 'ords', v: null });
+      await store(ctx, { op: 'put', k: 'pendShare', v: false }); await store(ctx, { op: 'put', k: 'pendDone', v: null });
+      return Response.json(await getOrds(ctx));
     }
     if (u.pathname === '/ord') {                              // служебное: открыть/закрыть заказ ?id=A1&closed=0|1
       const ctx = { env, out: [] }; const m = await getOrds(ctx), o = m[u.searchParams.get('id')];
