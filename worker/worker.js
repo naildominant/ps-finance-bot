@@ -19,7 +19,7 @@ async function tg(ctx, method, body) {
 }
 // премиум-эмодзи владельца на кнопках: подпись → [текст, id эмодзи] («Назад» — только красная стрелка)
 const ICON = { 'Подписка': ['Подписка', '4900380749263275153'], 'СТАРТ': ['СТАРТ', '5409048419211682843'], 'Закрыл оплату поставщику ✅': ['Закрыл оплату поставщику', '5465154027970908359'], '+': ['Доход', '5253652327734192243'], '−': ['Расход', '5255775038010829248'], '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
-  'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['Leadex', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
+  'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['LEADEX', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
 // цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
 const STYLE = { '+': 'success', '−': 'danger', 'СТАРТ': 'success', 'Оплата': 'success', 'Сегодня': 'primary', 'Завтра': 'primary', 'Послезавтра': 'primary', 'Другая дата': 'primary', 'Предоплата': 'primary', 'Залог': 'danger', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
 const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data, style]) => {
@@ -309,13 +309,13 @@ const putSt = (ctx, st) => store(ctx, { op: 'put', k: stKey(ctx), v: st });
 function summary(d) {
   const L = [];
   L.push(`<b>${d.edit ? '✏️ Исправление записи ' + d.edit : 'Проверьте запись'}</b>${d.of > 1 && !d.edit ? ` (${d.n} из ${d.of})` : ''}`);
-  L.push(`🏢 ${d.dir}`);
+  L.push(`🏢 ${d.dir === 'Leadex' ? 'LEADEX' : d.dir}`);
   L.push(`🔄 ${d.type || '—'}`);
   L.push(`💰 ${d.amount != null ? (d.cur === '$' ? '$' + d.amount : fmt(d.amount) + ' сум') : '—'}`);
   if (needsCat(d.type)) L.push(`🏷 ${d.cat ? (d.group === d.cat || String(d.cat).startsWith(d.group) ? d.cat : d.group + ' / ' + d.cat) : '—'}`);
   if (d.type === 'Между своими') L.push(`💳 ${d.from || '—'} → ${d.to || '—'}`);
   else L.push(`💳 ${(isOut(d.type) ? d.from : d.to) || '—'}`);
-  if (d.type === 'Предоплата') L.push(`🗓 Бронь на ${d.book ? human(d.book) : '—'}`);
+  if (d.type === 'Предоплата') L.push(d.dir === 'Leadex' ? `🤝 Сделка: ${esc(d.dealName || '—')}` : `🗓 Бронь на ${d.book ? human(d.book) : '—'}`);
   if (d.type === 'Предоплата' || d.type === 'Залог') L.push('ℹ️ Чужие деньги: в доход не идут, пока не закроете');
   L.push(`📅 ${human(d.date)}${d.time ? ', ' + d.time : ''}`);
   if (d.comment) L.push(`💬 ${d.comment}`);
@@ -358,7 +358,9 @@ async function askNext(ctx, cfg, st) {
   }
   if (d.type === 'Предоплата' && d.dir === 'Аренда PS5' && !d.to) { const c = cardByWord(cfg, 'Капитал'); if (c) d.to = c.name; }   // предоплата аренды всегда на Капитал (владелец 26.11)
   if (isIn(d.type) && !d.to) return void await askCard(ctx, cfg, st, 'to', '💳 На какую карту пришли деньги?');
-  if (d.type === 'Предоплата' && !d.book) { st.await = 'book'; await putSt(ctx, st);
+  if (d.type === 'Предоплата' && d.dir === 'Leadex' && !d.deal) { st.await = 'deal'; await putSt(ctx, st);   // предоплата LEADEX = сделка
+    return void await send(ctx, '🤝 <b>Название сделки?</b> Например <code>сайт для Азиза</code>.', withBack()); }
+  if (d.type === 'Предоплата' && d.dir !== 'Leadex' && !d.book) { st.await = 'book'; await putSt(ctx, st);
     return void await send(ctx, '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>На какую дату бронь?</b>\nНажмите кнопку или напишите, например, <code>28.11</code>.',
       withBack([[['Сегодня', 'bd:0'], ['Завтра', 'bd:1'], ['Послезавтра', 'bd:2']], [['Другая дата', 'cl:' + todayYmd().slice(0, 7)]]])); }
   st.await = null; await putSt(ctx, st);
@@ -393,6 +395,7 @@ const PS_RESERVE = 0;                                      // резерв PS SH
 const HIDDEN_GROUPS = ['Поставщик', 'Продажа', 'Проценты по вкладу'];
 // цвета кнопок категорий (владелец 27.11: «чтобы не смешивались») — соседние разные
 const CAT_STYLE = { 'Игры PS5': 'success', 'Игры PS4': 'primary', 'GTA 6': 'primary', 'Чистка PlayStation': 'success', 'Аксессуары': 'danger', 'Консоль': 'danger', 'Подписка': 'success',
+  'Такси (рабочее)': 'primary', 'Подписки и сервисы': 'success', 'Реклама': 'danger', 'Техника и ремонт': 'primary', 'Прочее': 'success',
   'OLX': 'success', 'Instagram': 'danger', 'Telegram': 'primary', 'Непредвиденные': 'danger' };
 const LOGO_STICKER = 'CAACAgEAAxkBAAIDUGsIoKXIO1jH-DR_xAZ2lhxDC9CUAAJ9AgAC3xnYRkWrScNxc61zPQQ';   // 💰 анимированный (27.11); прежнее лого: CAACAgIAAxkBAAIDPGsIn6xPb-Yt094Hbyt2vygJSQOXAAJNrAACXoTAS9-7y8vi2swfPQQ   // лого на экране СТАРТ
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
@@ -624,16 +627,16 @@ async function leadexSplit(ctx, cfg, id, amount) {
   const half = Math.round(rest / 2);
   const x = { id, amount, exp, fund, ret, invLeft, rest, nail: half, rishat: rest - half, over, at: Date.now() };
   await store(ctx, { op: 'put', k: 'lx:' + id, v: x });
-  const L = [`💼 <b>Leadex: пришло ${fmt(amount)} сум</b> (${id})`,
-    `Расходы Leadex с прошлого поступления: ${fmt(exp)}`, '',
-    `• Фонд Leadex 20%: <b>${fmt(fund)}</b> → карта фонда (не выбрана)`,
+  const L = [`💼 <b>LEADEX: пришло ${fmt(amount)} сум</b> (${id})`,
+    `Расходы LEADEX с прошлого поступления: ${fmt(exp)}`, '',
+    `• Фонд LEADEX 20%: <b>${fmt(fund)}</b> → карта фонда (не выбрана)`,
     ret ? `• Возврат вложений вам: <b>${fmt(ret)}</b> (останется вернуть ${fmt(invLeft - ret)})` : '• Вложения уже возвращены',
     over ? `⚠️ Расходы (${fmt(exp)}) больше, чем осталось на них (${fmt(pool)}). Долей в этот раз нет.\n💰 <b>Нужно вложить: ${fmt(exp - pool)}</b> — запишу как вложение, оно вернётся вам из следующих поступлений (20%).`
          : `• Расходы покрыты: ${fmt(exp)}\n• Вам 50%: <b>${fmt(half)}</b>\n• Ришату 50%: <b>${fmt(rest - half)}</b> → карта Ришата (не выбрана)`];
   x.short = over ? exp - pool : 0; await store(ctx, { op: 'put', k: 'lx:' + id, v: x });
   const kb = [[['✅ Перевёл', 'lxok:' + id], ['Позже', 'lxno:' + id]]];
   if (over) kb.push([['💰 Вложил ' + fmt(x.short), 'lxin:' + id]]);
-  return send(ctx, L.join('\n'), kb);
+  await send(ctx, L.join('\n'), kb); return true;              // ждём ответ: дальше ничего не шлём
 }
 async function onLeadex(ctx, q) {
   ctx.noTrack = true;
@@ -647,16 +650,16 @@ async function onLeadex(ctx, q) {
     const rid = await botRec(ctx, cfg, { dir: 'Leadex', type: 'Вложение', cat: 'Вложение', amount: y.short, from: src ? src.name : '', to: src && lx ? lx.name : '',
       comment: 'Покрытие расходов Leadex сверх 60% (' + iid + ')' });
     const amt = y.short; y.short = 0; await store(ctx, { op: 'put', k: 'lx:' + iid, v: y });
-    return edit(ctx, mid, `✅ Записал вложение ${fmt(amt)}${src ? `: «${src.name}»${lx ? ' → «' + lx.name + '»' : ''}` : ''} (${rid}). Оно добавлено к сумме, которую Leadex возвращает вам.`);
+    return edit(ctx, mid, `✅ Записал вложение ${fmt(amt)}${src ? `: «${src.name}»${lx ? ' → «' + lx.name + '»' : ''}` : ''} (${rid}). Оно добавлено к сумме, которую LEADEX возвращает вам.`);
   }
   const x = await store(ctx, { op: 'get', k: 'lx:' + id });
   if (!x) return edit(ctx, mid, 'Расчёт не найден.');
   if (k === 'lxin') {                                     // вложение недостающей суммы: с какой карты
     if (!x.short) return edit(ctx, mid, 'Вложение уже записано.');
     const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.cur === 'сум');
-    return send(ctx, `С какой карты вложили ${fmt(x.short)} в Leadex?`, [...chunk(list.map(({ c, i }) => [c.name, `lxif:${id}|${i}`]), 2), [['Без перевода, только записать', `lxif:${id}|-`]]]);
+    return send(ctx, `С какой карты вложили ${fmt(x.short)} в LEADEX?`, [...chunk(list.map(({ c, i }) => [c.name, `lxif:${id}|${i}`]), 2), [['Без перевода, только записать', `lxif:${id}|-`]]]);
   }
-  if (k === 'lxno') return edit(ctx, mid, 'Хорошо, напомню позже. Кнопка «✅ Перевёл» остаётся выше.', [[['✅ Перевёл', 'lxok:' + id]], ...(x.short ? [[['💰 Вложил ' + fmt(x.short), 'lxin:' + id]]] : [])]);
+  if (k === 'lxno') { await unkb(ctx, mid); await send(ctx, 'Хорошо, позже. Расчёт остаётся выше.', [[['✅ Перевёл', 'lxok:' + id]]]); await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx); }
   if (x.done) return edit(ctx, mid, 'Уже отмечено.');
   const recs = [];
   if (x.ret) recs.push(await botRec(ctx, cfg, { dir: 'Leadex', type: 'Возврат вложений', cat: 'Возврат вложений Leadex', amount: x.ret, comment: 'Возврат вложений из ' + id }));
@@ -664,7 +667,8 @@ async function onLeadex(ctx, q) {
   await gas(ctx, [{ op: 'append', sheet: 'Доли', row: [{ d: Date.now() }, id, x.amount, x.over ? 0 : x.exp, x.fund, x.ret, x.nail, x.rishat, x.over ? 'расходы > 60%, доли не начислены, нехватка → вложение' : 'отмечено'] }]);
   x.done = true; await store(ctx, { op: 'put', k: 'lx:' + id, v: x });
   if (!ctx.dry) await store(ctx, { op: 'put', k: 'lxLast', v: Date.now() });
-  return edit(ctx, mid, `✅ Отмечено. ${recs.length ? 'Записал: ' + recs.join(', ') + '. ' : ''}Таблица «Доли» обновлена.`);
+  await edit(ctx, mid, `✅ Отмечено. ${recs.length ? 'Записал: ' + recs.join(', ') + '. ' : ''}Таблица «Доли» обновлена.`);
+  await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx);
 }
 
 
@@ -835,6 +839,7 @@ async function onMessage(ctx, m) {
     if (st.d.cur === '$' && isIn(st.d.type) && !st.d.to) { const c = cardByWord(cfg, 'Доллары'); if (c) st.d.to = c.name; }
     return reshow(ctx, st);
   }
+  if (st.await === 'deal' && st.d) { remember(st); st.d.deal = 'new'; st.d.dealName = text.slice(0, 60); st.d.comment = 'Предоплата: ' + st.d.dealName; st.await = null; return reshow(ctx, st); }
   if (st.await === 'note' && st.d) {
     remember(st); st.d.cat = `Непредвиденные (${text.slice(0, 60)})`; st.await = null;
     return reshow(ctx, st);
@@ -852,7 +857,7 @@ async function onMessage(ctx, m) {
   ctx.ptype = st.ptype; ctx.ord = st.ord; ctx.ps = st.ps; return startDraft(ctx, cfg, st.dir || null, text);   // без выбранного направления: одна запись — спросим кнопкой, несколько — направление по смыслу
 }
 const complete = d => d.dir && d.type && d.amount != null && (d.type === 'Между своими' ? d.from && d.to
-  : (!needsCat(d.type) || d.cat) && (isOut(d.type) ? d.from : d.to) && (d.type !== 'Предоплата' || d.book));
+  : (!needsCat(d.type) || d.cat) && (isOut(d.type) ? d.from : d.to) && (d.type !== 'Предоплата' || (d.dir === 'Leadex' ? d.deal : d.book)));
 async function reshow(ctx, st) {
   if (!complete(st.d)) return askNext(ctx, await config(ctx), st);
   st.await = null; await putSt(ctx, st);
@@ -878,7 +883,7 @@ function draftFrom(cfg, dir, p, text, single) {
 }
 // направление выбрано позже — заново поискать категорию и карту по тексту записи
 // «Предоплата» и «Залог» как чужие деньги — только в аренде; в других направлениях «предоплата за сайт» — обычный доход
-function fixType(d) { if (d.dir && d.dir !== 'Аренда PS5' && (d.type === 'Предоплата' || d.type === 'Залог')) d.type = 'Доход'; }
+function fixType(d) { if (d.dir && d.dir !== 'Аренда PS5' && (d.type === 'Залог' || (d.type === 'Предоплата' && d.dir !== 'Leadex'))) d.type = 'Доход'; }   // предоплата — аренда и LEADEX (сделки)
 function refill(cfg, d) {
   fixType(d);
   if (!d.type) return;
@@ -1140,6 +1145,26 @@ async function startScreen(ctx) {
   if (lg && lg.ok && ctx.trail) ctx.trail.push(lg.result.message_id);
   return send(ctx, PAD(9) + '👇' + PAD(9), rows);
 }
+
+// ---------- LEADEX (владелец 27.11): сделки. Предоплата — «облако» (чужие деньги), Поступление закрывает сделку и делит всё ----------
+async function getDeals(ctx) { return (await store(ctx, { op: 'get', k: 'deals' })) || { _n: 0 }; }
+const putDeals = (ctx, m) => store(ctx, { op: 'put', k: 'deals', v: m });
+const dealList = m => Object.keys(m).filter(k => k !== '_n' && !m[k].closed).map(k => m[k]);
+async function leadexScreen(ctx) {
+  return send(ctx, '<b>LEADEX</b>', [[['Поступление', 'lq:in', 'success']], [['Предоплата', 'lq:pre', 'primary'], ['Расходы', 'lq:exp', 'danger']], [['Вложения', 'lq:inv']], [['📊 Таблица', 'lq:tab']], [BACK]]);
+}
+// при поступлении по сделке: предоплаты этой сделки → доход (без карты: деньги уже на карте), сделка закрыта; вернуть сумму для дележа
+async function releaseDeal(ctx, cfg, d) {
+  if (!d.deal || d.deal === 'new') return 0;
+  const m = await getDeals(ctx), o = m[d.deal]; if (!o) return 0;
+  let sum = 0;
+  for (const x of (await openItems(ctx)).filter(x => o.prepay.includes(x.id))) {
+    await botRec(ctx, cfg, { dir: 'Leadex', type: 'Доход', group: 'Предоплата за сайт', cat: 'Предоплата за сайт', amount: x.sum, comment: `Предоплата сделки «${o.name}» — сделка закрыта` });
+    await setItem(ctx, x, 0, 'подтверждено'); sum += x.sum;
+  }
+  o.closed = true; await putDeals(ctx, m);
+  return sum;
+}
 async function onCallback(ctx, q, again) {
   const cfg = await config(ctx);
   const [k, v] = q.data.split(':');
@@ -1215,6 +1240,23 @@ async function onCallback(ctx, q, again) {
     const nst = k === 'ro' ? { dir: 'Аренда PS5', ord: v } : { dir: 'Аренда PS5', ord: 'new', ps: v };
     await putSt(ctx, nst); return rentScreen(ctx, nst);
   }
+  if (k === 'lq') {                                  // экран LEADEX
+    await gone(ctx, mid); await putSt(ctx, { dir: 'Leadex' });
+    if (v === 'tab') return send(ctx, '📊 Таблицы LEADEX ещё нет. Привяжем позже.', [[BACK]]);
+    if (v === 'exp') return onCallback(ctx, { ...q, data: 'pt:-' }, true);
+    if (v === 'pre') return askNext(ctx, cfg, { d: Object.assign(draftFrom(cfg, 'Leadex', { type: 'Предоплата' }, '', true), { src: 'кнопка', n: 1, of: 1, comment: 'Предоплата' }), queue: [], dir: 'Leadex' });
+    if (v === 'inv') return askNext(ctx, cfg, { d: Object.assign(draftFrom(cfg, 'Leadex', { type: 'Вложение' }, '', true), { src: 'кнопка', n: 1, of: 1, comment: 'Вложение в LEADEX' }), queue: [], dir: 'Leadex' });
+    const ds = dealList(await getDeals(ctx));                // Поступление: какая сделка
+    return send(ctx, '💵 <b>Поступление: какая сделка?</b>', [...ds.map(o => [[`🤝 ${o.name}`, 'lqd:' + o.id]]), [['🆕 Без предоплаты', 'lqd:new']], [['🛠 Поддержка', 'lqd:sup']], [BACK]]);
+  }
+  if (k === 'lqd') {
+    await gone(ctx, mid);
+    const m = await getDeals(ctx), o = m[v];
+    const cat = v === 'sup' ? 'Поддержка (ежемесячная)' : 'Доплата за сайт';
+    const d = Object.assign(draftFrom(cfg, 'Leadex', { type: 'Доход' }, '', true), { group: cat, cat, deal: o ? o.id : null, src: 'кнопка', n: 1, of: 1,
+      comment: o ? `Поступление по сделке «${o.name}»` : v === 'sup' ? 'Поддержка сайта' : 'Поступление без предоплаты' });
+    return askNext(ctx, cfg, { d, queue: [], dir: 'Leadex' });
+  }
   if (k === 'ar') {                                  // оплата (или продление) / залог для выбранного клиента
     await gone(ctx, mid);
     if (v === 'list') { await putSt(ctx, { dir: 'Аренда PS5' }); return rentOrders(ctx); }
@@ -1268,6 +1310,7 @@ async function onCallback(ctx, q, again) {
     extra.push([BACK]);                                   // назад в главное меню
     if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [[['+', 'pt:+']], [['−', 'pt:-']], ...extra]);   // на всю ширину, с подписью (владелец 27.11)
     if (dir === 'Аренда PS5') return rentStart(ctx);
+    if (dir === 'Leadex') return leadexScreen(ctx);
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
   if (k === 'bk' && st.tool) { ctx.editMid = mid; await putSt(ctx, {}); return dirMenu(ctx); }
@@ -1313,6 +1356,10 @@ async function onCallback(ctx, q, again) {
         for (const qd of st.queue || []) if (qd.ord === 'new') qd.ord = oid;   // остальные части той же оплаты — в этот же заказ
       }
       const id = await save(ctx, cfg, d);
+      if (!d.edit && d.dir === 'Leadex' && d.type === 'Предоплата') {   // новая сделка LEADEX
+        const m = await getDeals(ctx); const did = 'D' + (++m._n);
+        m[did] = { id: did, name: d.dealName || 'сделка ' + did, prepay: [id], closed: false, at: Date.now() }; await putDeals(ctx, m);
+      }
       await edit(ctx, mid, `✅ Записано · ${id}${d.ord && !d.edit ? ' · заказ ' + d.ord : ''}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
       ctx.keep = [mid]; ctx.noTrack = true;            // запись и расчёты после неё остаются в чате
       { const t = (await store(ctx, { op: 'get', k: 'trail' })) || []; await store(ctx, { op: 'put', k: 'trail', v: t.filter(i => i !== mid) }); ctx.trail = ctx.trail.filter(i => i !== mid); }
@@ -1338,8 +1385,8 @@ async function onCallback(ctx, q, again) {
         ctx.noTrack = false; await putSt(ctx, { tool: { kind: 'hpsadd' }, await: 'tool' }); return;     // ждём рубли или «Позже»
       }
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
-        const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
-        await leadexSplit(ctx, cfg, id, uzs);
+        const uzs = (d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount) + await releaseDeal(ctx, cfg, d);   // + предоплата сделки
+        if (await leadexSplit(ctx, cfg, id, uzs)) { ctx.noTrack = false; await putSt(ctx, {}); return; }
       }
       if (!d.edit) await doneMark(ctx, mark);           // один раз в самом конце
       ctx.noTrack = false; return nextOrMenu(ctx, cfg, st);
