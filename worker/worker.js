@@ -537,8 +537,9 @@ async function onToolText(ctx, cfg, st, text) {
     const diff = Math.round(a.amount - now);
     await putSt(ctx, {});
     if (diff <= 0) { st.tool = { kind: 'adj', card: t.card, cur: 'сум' }; return diff === 0 ? send(ctx, '✅ Совпадает, процентов не прибавилось.') : onToolText(ctx, cfg, st, text); }
-    const rid = await botRec(ctx, cfg, { dir: 'PS SHOP', type: 'Доход', group: 'Проценты по вкладу', cat: 'Проценты по вкладу', amount: diff, to: t.card, comment: 'Проценты по вкладу за месяц' });
-    return send(ctx, `💰 Проценты по «${t.card}»: +${fmt(diff)} сум — доход PS SHOP (${rid}). На вкладе теперь ${fmt(a.amount)}.`, [[['🗑 Отменить', 'rm:' + rid]]]);
+    // вклад = копилка владельца (26.11): проценты банка не доход PS SHOP, просто прибавляем к вкладу
+    const rid = await botRec(ctx, cfg, { dir: '—', type: 'Корректировка', amount: diff, to: t.card, comment: 'Проценты банка по вкладу за месяц' });
+    return send(ctx, `💰 Банк добавил на «${t.card}»: +${fmt(diff)} сум (${rid}). На вкладе теперь ${fmt(a.amount)}.`, [[['🗑 Отменить', 'rm:' + rid]]]);
   }
   if (t.kind === 'adj') {
     const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
@@ -582,7 +583,7 @@ async function morning(env) {
   if (today.endsWith('-01')) {
     const dep = cfg.cards.find(c => /вклад/i.test(c.name));
     if (dep) { await putSt(ctx, { tool: { kind: 'interest', card: dep.name }, await: 'tool' });
-      await send(ctx, `📅 Начало месяца. Сколько сейчас на «${dep.name}»? Напишите сумму из приложения — разницу запишу как проценты (доход PS SHOP).`); }
+      await send(ctx, `📅 Начало месяца. Сколько сейчас на «${dep.name}»? Напишите сумму из приложения — разницу (проценты банка) прибавлю к вкладу.`); }
   }
   for (const x of await openItems(ctx)) {
     if (x.type !== 'Предоплата' || !x.book || !x.book.d) continue;
