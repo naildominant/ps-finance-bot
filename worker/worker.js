@@ -324,6 +324,12 @@ async function askCard(ctx, cfg, st, side, q) {
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
 // эмодзи владельца после записи (владелец 26.11): расход — 💸; доход — 🤑
 const DONE_EMO = { 'Расход': '5319172285762919855', 'Доход': '5391292736647209211' };
+// доход — стикер владельца (мишка 🤑, 26.11); расход — премиум-эмодзи 💸
+const DONE_STICKER = { 'Доход': 'CAACAgIAAxkBAAICTWsHvj9ZVbXwLGJB0WpnrKZMTRiYAAIEAQAC9wLIDyAPdzvpq8hJPQQ' };
+async function doneMark(ctx, type) {
+  if (DONE_STICKER[type]) return tg(ctx, 'sendSticker', { chat_id: ctx.chat, sticker: DONE_STICKER[type] });
+  if (DONE_EMO[type]) return send(ctx, `<tg-emoji emoji-id="${DONE_EMO[type]}">💸</tg-emoji>`);
+}
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
 const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['📄 Открыть таблицу', SHEET_URL]]]); };
 
@@ -1099,12 +1105,12 @@ async function onCallback(ctx, q, again) {
         else await rentShare(ctx, cfg);
       }
       if (!d.edit && d.type === 'Залог' && await store(ctx, { op: 'get', k: 'pendShare' })) { await store(ctx, { op: 'put', k: 'pendShare', v: false }); await rentShare(ctx, cfg); }
-      if (waitZ && !(st.queue && st.queue.length)) { if (DONE_EMO[d.type]) await send(ctx, `<tg-emoji emoji-id="${DONE_EMO[d.type]}">💸</tg-emoji>`); ctx.noTrack = false; await putSt(ctx, {}); return; }   // ждём ответ про залог
+      if (waitZ && !(st.queue && st.queue.length)) { await doneMark(ctx, d.type); ctx.noTrack = false; await putSt(ctx, {}); return; }   // ждём ответ про залог
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
         const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
         await leadexSplit(ctx, cfg, id, uzs);
       }
-      if (!d.edit && DONE_EMO[d.type]) await send(ctx, `<tg-emoji emoji-id="${DONE_EMO[d.type]}">💸</tg-emoji>`);   // один раз в конце записи
+      if (!d.edit) await doneMark(ctx, d.type);         // один раз в конце записи
       ctx.noTrack = false; return nextOrMenu(ctx, cfg, st);
     } catch (e) { return edit(ctx, mid, summary(d) + '\n\n⚠️ Не получилось записать: ' + e.message, [[['✅ Ещё раз', 'ok'], ['❌ Отменить', 'no']]]); }
   }

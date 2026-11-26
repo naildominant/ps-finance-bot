@@ -85,3 +85,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - Amount words (owner 26.11): лям/лимон/миллион/млн/м, тыс/косарь/к; fallback → AI parse («полтора миллиона»).
 - Brother share after first rent payment is postponed until «Залог взяли?» answered (DO pendShare): Нет → share; Да → after Залог saved → share.
 - Order payments tracked (o.pay, o.conv). Deleting the order's last payment → paid=false, prepayment conversions deleted and prepay item reopened. Orders before this (A5, A6) have no pay list.
+- Income done mark = owner's sticker (Buddy_Bear 🤑, file_id in DONE_STICKER); expense = premium emoji 💸.
