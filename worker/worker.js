@@ -396,6 +396,7 @@ const HIDDEN_GROUPS = ['Поставщик', 'Продажа', 'Проценты
 // цвета кнопок категорий (владелец 27.11: «чтобы не смешивались») — соседние разные
 const CAT_STYLE = { 'Игры PS5': 'success', 'Игры PS4': 'primary', 'GTA 6': 'primary', 'Чистка PlayStation': 'success', 'Аксессуары': 'danger', 'Консоль': 'danger', 'Подписка': 'success',
   'Такси (рабочее)': 'primary', 'Подписки и сервисы': 'success', 'Реклама': 'danger', 'Техника и ремонт': 'primary', 'Прочее': 'success',
+  'Игры': 'success', 'Подписки': 'primary', 'Доставка': 'danger',
   'OLX': 'success', 'Instagram': 'danger', 'Telegram': 'primary', 'Непредвиденные': 'danger' };
 const LOGO_STICKER = 'CAACAgEAAxkBAAIDUGsIoKXIO1jH-DR_xAZ2lhxDC9CUAAJ9AgAC3xnYRkWrScNxc61zPQQ';   // 💰 анимированный (27.11); прежнее лого: CAACAgIAAxkBAAIDPGsIn6xPb-Yt094Hbyt2vygJSQOXAAJNrAACXoTAS9-7y8vi2swfPQQ   // лого на экране СТАРТ
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
@@ -1068,9 +1069,9 @@ async function dropFromOrders(ctx, id) {
 const PS_MARKS = ['△', '✕', '□'];
 async function rentStart(ctx) {
   const m = await getOrds(ctx), items = await openItems(ctx), os = ordList(m);
-  if (!os.length) return rentConsole(ctx);
   const rows = os.map(o => [[ordInfo(o, items).label, 'ro:' + o.id]]);
-  rows.push([['🆕 Новый клиент', 'ro:new']], [BACK]);
+  rows.push([['🆕 Новый клиент', 'ro:new']]);
+  rows.push([['−', 'ra:exp']], [['📉 Расходы за месяц', 'mr:out|1']], [['📄 Таблица', 'ra:tab']], [BACK]);   // расход аренды, сводка, таблица (владелец 27.11)
   return send(ctx, '<b>АРЕНДА: какой клиент?</b>', rows);
 }
 async function rentConsole(ctx) {                          // занятые приставки (у открытых заказов) не предлагаем
@@ -1246,9 +1247,14 @@ async function onCallback(ctx, q, again) {
     const nst = k === 'ro' ? { dir: 'Аренда PS5', ord: v } : { dir: 'Аренда PS5', ord: 'new', ps: v };
     await putSt(ctx, nst); return rentScreen(ctx, nst);
   }
+  if (k === 'ra') {                                  // Аренда: записать расход / таблица
+    await gone(ctx, mid); await putSt(ctx, { dir: 'Аренда PS5' });
+    if (v === 'tab') return send(ctx, '📄 Таблицы аренды ещё нет. Привяжем позже.', [[['↩️ Назад', 'd:1']]]);
+    return onCallback(ctx, { ...q, data: 'pt:-' }, true);
+  }
   if (k === 'lq') {                                  // экран LEADEX
     await gone(ctx, mid); await putSt(ctx, { dir: 'Leadex' });
-    if (v === 'tab') return send(ctx, '📊 Таблицы LEADEX ещё нет. Привяжем позже.', [[BACK]]);
+    if (v === 'tab') return send(ctx, '📄 Таблицы LEADEX ещё нет. Привяжем позже.', [[['↩️ Назад', 'd:2']]]);
     if (v === 'exp') return onCallback(ctx, { ...q, data: 'pt:-' }, true);
     if (v === 'pre') return askNext(ctx, cfg, { d: Object.assign(draftFrom(cfg, 'Leadex', { type: 'Предоплата' }, '', true), { src: 'кнопка', n: 1, of: 1, comment: 'Предоплата' }), queue: [], dir: 'Leadex' });
     if (v === 'inv') return askNext(ctx, cfg, { d: Object.assign(draftFrom(cfg, 'Leadex', { type: 'Вложение' }, '', true), { src: 'кнопка', n: 1, of: 1, comment: 'Вложение в LEADEX' }), queue: [], dir: 'Leadex' });
