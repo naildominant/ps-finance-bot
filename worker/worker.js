@@ -405,8 +405,8 @@ async function onTool(ctx, q) {
     let tot = 0, alien = 0, n = 0; const L = ['<b>💳 Баланс по картам</b>', ''];
     for (const { r, t, h } of rows) {
       if (h) L.push(h === '—' ? '┈┈┈┈┈┈┈┈┈┈' : h, '');
-      const v = Number(r[8]) || 0, j = Number(r[9]) || 0, usd = r[2] === '$', sub = (String(r[0]).match(/\((.*)\)/) || [])[1];
-      L.push(`${++n}. <b>${esc(t)}</b>${sub ? ` · ${esc(sub)}` : ''}\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}`, '');
+      const v = Number(r[8]) || 0, j = Number(r[9]) || 0, usd = r[2] === '$';
+      L.push(`${++n}. <b>${esc(t)}</b>\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}`, '');
       if (!usd) { tot += v; alien += j; }
     }
     L.push('━━━━━━━━━━', `Всего в сумах: <b>${fmt(tot)}</b>`); if (alien) L.push(`Из них мои: <b>${fmt(tot - alien)}</b>`);
