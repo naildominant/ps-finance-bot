@@ -511,7 +511,9 @@ async function onToolText(ctx, cfg, st, text) {
     await putSt(ctx, {});
     await send(ctx, `✅ ${fmt(a.amount)} сум из залога ${x.id} — доход аренды (${rid}). Осталось залога: ${fmt(left)}.`,
       left > 0 ? [[['↩️ Остаток вернул клиенту', 'zr:' + x.id]]] : null);
-    return x.dir === 'Аренда PS5' ? rentShare(ctx, cfg) : null;
+    if (x.dir !== 'Аренда PS5') return;
+    ctx.noTrack = true; await rentShare(ctx, cfg); await doneMark(ctx, 'Доход'); ctx.noTrack = false;   // как после обычной оплаты: расчёт → стикер → меню
+    return dirMenu(ctx);
   }
   if (t.kind === 'pc') {
     if (!a.amount) return finishPrepay(ctx, cfg, x, 0, null);
@@ -1017,7 +1019,7 @@ async function onCallback(ctx, q, again) {
     if (o && o.paid) {                                // заказ уже идёт → продление
       const z = (await openItems(ctx)).filter(x => o.zalog.includes(x.id));
       if (!z.length) return askNext(ctx, cfg, { d: rentDraft(cfg, 'Доход', { ord: oid, group: 'Аренда', cat: 'Продление', comment: 'Продление ' + oid }), queue: [] });
-      return send(ctx, `➕ <b>Продление ${o.id}: откуда деньги?</b>`, [[['💵 Новые деньги', `ap:${oid}`]], ...z.map(x => [[`🔐 Из залога (${fmt(x.sum)})`, 'zp:' + x.id]]), [BACK]]);
+      return send(ctx, `➕ <b>Продление ${o.id}: с залога или поступление?</b>`, [[['💵 Поступление', `ap:${oid}`]], ...z.map(x => [[`🔐 Из залога (${fmt(x.sum)})`, 'zp:' + x.id]]), [BACK]]);
     }
     return askNext(ctx, cfg, { d: rentDraft(cfg, 'Доход', { ord: oid, ps, group: 'Аренда', cat: 'Оплата аренды', comment: 'Оплата аренды ' + (o ? o.id : 'нового клиента ' + (ps || '')) }), queue: [] });
   }

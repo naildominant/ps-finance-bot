@@ -88,3 +88,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - Income done mark = owner's sticker (Buddy_Bear 🤑, file_id in DONE_STICKER); expense = premium emoji 💸.
 - Rent flow fix (owner 26.11): after first payment ONLY «Залог взяли?»; no brother share, no sticker, no menu until answered (DO pendShare = order id, pendDone = type). Нет → share → sticker → menu. Да → amount → card → ✅ Залог → share → sticker → menu. Multi-part payment continues to next part meanwhile.
 - 26.11 ~10:10: ALL rent test records deleted (R8,R9,R17,R19–R23,R25–R29; earlier R14,R15,R16,R18,R24). Z1 restored (150 000 открыт), orders rebuilt (/ordreset): only A1 = Z1. Admin: /ordreset?k=.
+- Продление (owner 26.11): 2nd «Оплата» on same client = продление; if open залог → «С залога или поступление?» [💵 Поступление][🔐 Из залога (X)]; из залога → amount → deducted from залог, income; then share → sticker → menu.
