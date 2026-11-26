@@ -379,6 +379,8 @@ async function doneMark(ctx, type) {
   if (DONE_EMO[type]) return send(ctx, `<tg-emoji emoji-id="${DONE_EMO[type]}">💸</tg-emoji>`);
 }
 const TEST_WIPE = true;                                   // /start стирает чат — только на время теста (выключить на запуске)
+// накопление (владелец 26.11): ВКЛАД = копилка на 14 000 000 сум к 06.01.2027 (вклад больше не резерв PS SHOP)
+const GOAL_SUM = 14000000, GOAL_DATE = '06.01.2027';
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
 const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };   // долги и «Назад» → СТАРТ (владелец 26.11)
 
@@ -470,7 +472,7 @@ async function onTool(ctx, q) {
     for (const { r, t, h } of rows) {
       if (h) L.push(h === '—' ? '┈┈┈┈┈┈┈┈┈┈' : h, '');
       const v = Number(r[8]) || 0, j = Number(r[9]) || 0, usd = r[2] === '$';
-      L.push(`${++n}. <b>${esc(t)}</b>\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}`, '');
+      L.push(`${++n}. <b>${esc(t)}</b>\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}` + (t === 'ВКЛАД' ? `\n      🎯 цель ${fmt(GOAL_SUM)} к ${GOAL_DATE}: ${Math.round(v / GOAL_SUM * 100)}%, осталось ${fmt(Math.max(0, GOAL_SUM - v))}` : ''), '');
       if (!usd) { tot += v; alien += j; }
     }
     L.push('━━━━━━━━━━', `Всего в сумах: <b>${fmt(tot)}</b>`); if (alien) L.push(`Из них мои: <b>${fmt(tot - alien)}</b>`);
