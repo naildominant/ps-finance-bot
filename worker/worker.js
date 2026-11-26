@@ -1421,6 +1421,11 @@ export default {
       await dropFromOrders(ctx, id);
       return Response.json({ journal: f.row || null, items: z.row || null, ords: await getOrds(ctx) });
     }
+    if (u.pathname === '/wipe') {                             // служебное: обнулить память бота (номера R, заказы, долги, черновики)
+      const ctx = { env, out: [] };
+      for (const k of ['seq', 'trail', 'ords', 'pendShare', 'pendDone', 'supDebt', 'supUnknown', 'bro', 'lxLast', 'psLast', 'rateDay']) await store(ctx, { op: 'put', k, v: null });
+      await putSt(ctx, {}); return Response.json({ ok: true, ords: await getOrds(ctx) });
+    }
     if (u.pathname === '/ordreset') {                         // служебное: пересобрать заказы из открытых залогов/предоплат
       const ctx = { env, out: [] }; await store(ctx, { op: 'put', k: 'ords', v: null });
       await store(ctx, { op: 'put', k: 'pendShare', v: false }); await store(ctx, { op: 'put', k: 'pendDone', v: null });
