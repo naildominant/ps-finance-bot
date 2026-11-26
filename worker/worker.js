@@ -22,18 +22,31 @@ const ICON = { '📄 Таблица': ['Таблица', '5319080489426887527'],
   'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['LEADEX', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
 // цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
 const STYLE = { '+': 'success', '−': 'danger', 'СТАРТ': 'success', 'Оплата': 'success', 'Сегодня': 'primary', 'Завтра': 'primary', 'Послезавтра': 'primary', 'Другая дата': 'primary', 'Предоплата': 'primary', 'Залог': 'danger', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
+// премиум-эмодзи (владелец 27.11): обычные эмодзи в тексте и в начале кнопки заменяются на анимированные из наборов владельца
+const PE = {"✅": "5465154027970908359", "↩️": "5215261582170278752", "💳": "5472250091332993630", "🧾": "5204242830687494041", "💰": "5417924076503062111", "📄": "5319080489426887527", "🏷": "5298877105000439431", "🤝": "5402457289384809602", "🗑": "5445267414562389170", "✏️": "5395444784611480792", "📅": "5413879192267805083", "📉": "5246762912428603768", "➕": "5253652327734192243", "🔥": "5424972470023104089", "⚠️": "5447644880824181073", "📷": "5463397592505274619", "❌": "5210952531676504517", "🔐": "5296369303661067030", "✋": "5406610501285204375", "🏁": "5204415960819181173", "🏢": "5309903664733759148", "🔄": "5375338737028841420", "🗓": "5413879192267805083", "💸": "5319172285762919855", "👤": "5312412634304226296", "💵": "5409048419211682843", "📋": "5402108679774282930", "👉": "5416117059207572332", "ℹ️": "5334544901428229844", "💬": "5443038326535759644", "✍️": "5406922599378736770", "🎮": "5408830063074365909", "🤑": "5391292736647209211", "📈": "5244837092042750681", "🎤": "5224736245665511429", "➖": "5255775038010829248", "🏠": "5416041192905265756", "⭐": "5438496463044752972", "🎯": "5461009483314517035", "🧮": "5231200819986047254", "💼": "5215420556089776398", "🧡": "5467814330714041218", "👌": "5402481568834935235", "👇": "5406745015365943482", "🛠": "5341715473882955310", "⏳": "5447497297157970203", "🆕": "5382357040008021292", "📊": "5231200819986047254", "🔒": "5296369303661067030"};
+const PE_KEYS = Object.keys(PE).sort((a, b) => b.length - a.length);
+const PE_RE = new RegExp('(' + PE_KEYS.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\ufe0f?', 'g');
+function premium(text) {                                  // не трогаем уже готовые <tg-emoji> и <code>
+  return String(text).split(/(<tg-emoji[^>]*>[\s\S]*?<\/tg-emoji>|<code>[\s\S]*?<\/code>)/).map((part, i) => i % 2 ? part
+    : part.replace(PE_RE, e => { const k = e.replace(/\ufe0f$/, ''); const id = PE[k] || PE[e]; return id ? `<tg-emoji emoji-id="${id}">${e}</tg-emoji>` : e; })).join('');
+}
+function btnIcon(text) {                                  // «📉 Расходы» → иконка + «Расходы»
+  for (const k of PE_KEYS) if (text.startsWith(k)) { const rest = text.slice(k.length).replace(/^\ufe0f/, '').trim(); if (rest) return [rest, PE[k]]; }
+  return null;
+}
 const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data, style]) => {
-  const b = ICON[text] ? { text: ICON[text][0], icon_custom_emoji_id: ICON[text][1] } : { text };
+  const ic = ICON[text] || btnIcon(text);
+  const b = ic ? { text: ic[0], icon_custom_emoji_id: ic[1] } : { text };
   if (style || STYLE[text]) b.style = style || STYLE[text];
   return /^https?:/.test(data) ? { ...b, url: data } : { ...b, callback_data: data }; })) });
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU/edit';
 const send = async (ctx, text, rows) => {
   if (ctx.editMid) {                                       // «Назад»: экран меняется на месте, без анимации удаления (владелец 26.11)
     const mid = ctx.editMid; ctx.editMid = null;
-    const e = await tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: mid, text, parse_mode: 'HTML', reply_markup: kb(rows || []) });
+    const e = await tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: mid, text: premium(text), parse_mode: 'HTML', reply_markup: kb(rows || []) });
     if (e && e.ok) { if (ctx.trail && !ctx.noTrack) ctx.trail.push(mid); return e; }
   }
-  const r = await tg(ctx, 'sendMessage', { chat_id: ctx.chat, text, parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
+  const r = await tg(ctx, 'sendMessage', { chat_id: ctx.chat, text: premium(text), parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
   if (ctx.trail && !ctx.noTrack && r && r.ok) ctx.trail.push(r.result.message_id);   // «лишнее» — сотрём при возврате в меню
   return r;
 };
@@ -51,7 +64,7 @@ async function purge(ctx) {
 const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const edit = (ctx, mid, text, rows) => {
   if (ctx.orig && mid === ctx.origMid) text = esc(ctx.orig) + '\n\n👉 ' + text;
-  return tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: mid, text, parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
+  return tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: mid, text: premium(text), parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
 };
 
 // ---------- Google Таблица (через Apps Script) ----------
@@ -579,7 +592,7 @@ async function onToolText(ctx, cfg, st, text) {
     if (f.cur === '$') { f.amount = Math.abs(diff); }
     const rid = await botRec(ctx, cfg, f);
     return send(ctx, `🧮 «${t.card}»: по записям было ${fmt(now)}, теперь ${fmt(a.amount)} (${diff > 0 ? '+' : '−'}${fmt(Math.abs(diff))}). Записал как корректировку ${rid}, в доходы и расходы не идёт.`,
-      [[['🗑 Отменить корректировку', 'rm:' + rid]]]);
+      [[['🗑 Отменить', 'rm:' + rid]]]);
   }
   const items = await openItems(ctx); const x = items.find(i => i.id === t.id);
   if (!x) { await putSt(ctx, {}); return send(ctx, 'Эта запись уже закрыта.'); }
@@ -590,7 +603,7 @@ async function onToolText(ctx, cfg, st, text) {
     await setItem(ctx, x, left, left > 0 ? 'открыт' : 'закрыт');
     await putSt(ctx, {});
     await send(ctx, `✅ ${fmt(a.amount)} сум из залога ${x.id} — доход аренды (${rid}). Осталось залога: ${fmt(left)}.`,
-      left > 0 ? [[['↩️ Остаток вернул клиенту', 'zr:' + x.id]]] : null);
+      left > 0 ? [[['↩️ Вернул остаток', 'zr:' + x.id]]] : null);
     if (x.dir !== 'Аренда PS5') return;
     ctx.noTrack = true; if (await rentShare(ctx, cfg)) return;   // ждём ответ про брата
     await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx);
@@ -620,7 +633,7 @@ async function morning(env) {
     if (x.type !== 'Предоплата' || !x.book || !x.book.d) continue;
     if (ymdT(new Date(x.book.d + TZ_MS)) > today) continue;
     const o = ordOf(await getOrds(ctx), x.id);
-    await send(ctx, 'Клиент приехал?\n' + itemText(x) + (o ? `\nЗаказ ${o.id}` : ''), o ? [[['✅ Приехал — записать оплату', `ao:in|${o.id}`], ['🔥 Сгорела', 'pb:' + x.id]]] : itemButtons(x));
+    await send(ctx, 'Клиент приехал?\n' + itemText(x) + (o ? `\nЗаказ ${o.id}` : ''), o ? [[['✅ Приехал', `ao:in|${o.id}`], ['🔥 Сгорела', 'pb:' + x.id]]] : itemButtons(x));
   }
 }
 
@@ -672,7 +685,7 @@ async function onLeadex(ctx, q) {
   if (k === 'lxin') {                                     // вложение недостающей суммы: с какой карты
     if (!x.short) return edit(ctx, mid, 'Вложение уже записано.');
     const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.cur === 'сум');
-    return send(ctx, `С какой карты вложили ${fmt(x.short)} в LEADEX?`, [...chunk(list.map(({ c, i }) => [c.name, `lxif:${id}|${i}`]), 2), [['Без перевода, только записать', `lxif:${id}|-`]]]);
+    return send(ctx, `С какой карты вложили ${fmt(x.short)} в LEADEX?`, [...chunk(list.map(({ c, i }) => [c.name, `lxif:${id}|${i}`]), 2), [['Только записать', `lxif:${id}|-`]]]);
   }
   if (k === 'lxno') { await unkb(ctx, mid); await send(ctx, 'Хорошо, позже. Расчёт остаётся выше.', [[['✅ Перевёл', 'lxok:' + id]]]); await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx); }
   if (x.done) return edit(ctx, mid, 'Уже отмечено.');
@@ -1086,7 +1099,7 @@ async function rentStart(ctx) {
   const m = await getOrds(ctx), items = await openItems(ctx), os = ordList(m);
   const rows = os.map(o => [[ordInfo(o, items).label, 'ro:' + o.id]]);
   rows.push([['🆕 Новый клиент', 'ro:new']]);
-  rows.push([['−', 'ra:exp']], [['📉 Расходы за месяц', 'mr:out|1']], [['📄 Таблица', 'ra:tab']], [BACK]);   // расход аренды, сводка, таблица (владелец 27.11)
+  rows.push([['−', 'ra:exp']], [['📉 Расходы', 'mr:out|1']], [['📄 Таблица', 'ra:tab']], [BACK]);   // расход аренды, сводка, таблица (владелец 27.11)
   return send(ctx, '<b>АРЕНДА: какой клиент?</b>', rows);
 }
 async function rentConsole(ctx) {                          // занятые приставки (у открытых заказов) не предлагаем
@@ -1142,7 +1155,7 @@ async function flatReminder(env, when) {
   ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
   ctx.noTrack = true;
   await send(ctx, when === 'eve' ? `🏠 <b>Завтра, ${FLAT_DAY}-го — оплата квартиры $${FLAT_USD}</b>` : `🏠 <b>Сегодня ${FLAT_DAY}-е — оплата квартиры $${FLAT_USD}</b>\nОплатили?`,
-    [[['✅ Оплатил квартиру', 'flat']]]);
+    [[['✅ Оплатил', 'flat']]]);
 }
 async function supReminder(env) {
   const ctx = { env, out: [] }; const cfg = await config(ctx, true);
@@ -1152,10 +1165,10 @@ async function supReminder(env) {
 }
 async function debtRows(ctx, cfg) {                         // кнопки долгов — на СТАРТ и в главном меню
   cfg = cfg || await config(ctx); const rows = [];
-  const b = await rentDue(ctx, cfg); if (b > 0) rows.push([[`👤 Долг брату: ${fmt(b)}`, 'dbro']]);
+  const b = await rentDue(ctx, cfg); if (b > 0) rows.push([[`👤 Брат: ${fmt(b)}`, 'dbro']]);
   const p = await supDue(ctx);
-  if (p > 0) rows.push([[`🧾 Долг поставщику: ${fmt(p)}`, 'dsup']]);
-  else if (await store(ctx, { op: 'get', k: 'supUnknown' })) rows.push([['🧾 Поставщик: есть долг', 'dsup']]);
+  if (p > 0) rows.push([[`🧾 Поставщик: ${fmt(p)}`, 'dsup']]);
+  else if (await store(ctx, { op: 'get', k: 'supUnknown' })) rows.push([['🧾 Поставщик: долг ?', 'dsup']]);
   return rows;
 }
 async function startScreen(ctx) {
@@ -1348,10 +1361,10 @@ async function onCallback(ctx, q, again) {
     await putSt(ctx, { dir });
     const extra = [];                                       // «Закрыл оплату» убран (владелец 26.11): оплата — через «Долг поставщику» на СТАРТ
     extra.push([BACK]);                                   // назад в главное меню
-    if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [[['+', 'pt:+']], [['−', 'pt:-']], [['📉 Расходы за месяц', 'mr:out|0']], ...extra]);   // на всю ширину, с подписью (владелец 27.11)
+    if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [[['+', 'pt:+']], [['−', 'pt:-']], [['📉 Расходы', 'mr:out|0']], ...extra]);   // на всю ширину, с подписью (владелец 27.11)
     if (dir === 'Аренда PS5') return rentStart(ctx);
     if (dir === 'Leadex') return leadexScreen(ctx);
-    if (dir === 'Личное') return send(ctx, '<b>ЛИЧНОЕ</b>', [[['−', 'pt:-']], [['+', 'pt:+']], [['🤝 Дал в долг', 'ln:new', 'primary']], [['📉 Расходы за месяц', 'mr:out|3']], ...extra]);   // владелец 27.11
+    if (dir === 'Личное') return send(ctx, '<b>ЛИЧНОЕ</b>', [[['−', 'pt:-']], [['+', 'pt:+']], [['🤝 Дал в долг', 'ln:new', 'primary']], [['📉 Расходы', 'mr:out|3']], ...extra]);   // владелец 27.11
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
   if (k === 'bk' && st.tool) { ctx.editMid = mid; await putSt(ctx, {}); return dirMenu(ctx); }
