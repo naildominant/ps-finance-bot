@@ -18,10 +18,10 @@ async function tg(ctx, method, body) {
   return r.json();
 }
 // премиум-эмодзи владельца на кнопках: подпись → [текст, id эмодзи] («Назад» — только красная стрелка)
-const ICON = { 'Закрыл оплату поставщику ✅': ['Закрыл оплату поставщику', '5465154027970908359'], '+': [' ', '5253652327734192243'], '−': [' ', '5255775038010829248'], '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
+const ICON = { 'СТАРТ': ['СТАРТ', '5409048419211682843'], 'Закрыл оплату поставщику ✅': ['Закрыл оплату поставщику', '5465154027970908359'], '+': [' ', '5253652327734192243'], '−': [' ', '5255775038010829248'], '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
   'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['Leadex', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
 // цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
-const STYLE = { 'Оплата': 'success', 'Сегодня': 'primary', 'Завтра': 'primary', 'Послезавтра': 'primary', 'Другая дата': 'primary', 'Предоплата': 'primary', 'Залог': 'danger', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
+const STYLE = { 'СТАРТ': 'success', 'Оплата': 'success', 'Сегодня': 'primary', 'Завтра': 'primary', 'Послезавтра': 'primary', 'Другая дата': 'primary', 'Предоплата': 'primary', 'Залог': 'danger', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
 const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data, style]) => {
   const b = ICON[text] ? { text: ICON[text][0], icon_custom_emoji_id: ICON[text][1] } : { text };
   if (style || STYLE[text]) b.style = style || STYLE[text];
@@ -512,8 +512,8 @@ async function onToolText(ctx, cfg, st, text) {
     await send(ctx, `✅ ${fmt(a.amount)} сум из залога ${x.id} — доход аренды (${rid}). Осталось залога: ${fmt(left)}.`,
       left > 0 ? [[['↩️ Остаток вернул клиенту', 'zr:' + x.id]]] : null);
     if (x.dir !== 'Аренда PS5') return;
-    ctx.noTrack = true; await rentShare(ctx, cfg); await doneMark(ctx, 'Доход'); ctx.noTrack = false;   // как после обычной оплаты: расчёт → стикер → меню
-    return dirMenu(ctx);
+    ctx.noTrack = true; if (await rentShare(ctx, cfg)) return;   // ждём ответ про брата
+    await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx);
   }
   if (t.kind === 'pc') {
     if (!a.amount) return finishPrepay(ctx, cfg, x, 0, null);
@@ -661,16 +661,18 @@ async function rentShare(ctx, cfg) {
   const L = [`👤 <b>Брату перевести: ${fmt(Math.max(0, due))} сум</b>`,     // коротко (владелец 26.11); подробности — в таблице «Доли»
     `<i>60% прибыли аренды, уже отдано ${fmt(paid)}</i>`];
   if (nid) L.push('', `🧡 Ваши 40%: +${fmt(mineAdd)} сум → Личное`);
-  if (due <= 0) return send(ctx, L.join('\n'));
+  if (due <= 0) { await send(ctx, L.join('\n')); return false; }
   await store(ctx, { op: 'put', k: 'bro', v: { amount: due } });
-  return send(ctx, L.join('\n'), [[['✅ Перевёл брату', 'bro:'], ['Позже', 'brol:']]]);
+  await send(ctx, L.join('\n'), [[['✅ Перевёл брату', 'bro:'], ['Позже', 'brol:']]]);
+  return true;                                            // ждём ответ: дальше ничего не шлём (владелец 26.11)
 }
 // кнопки: перевёл в резерв / брату → с какой карты
 async function onShares(ctx, q) {
   ctx.noTrack = true;
   const cfg = await config(ctx); const [k, id] = q.data.split(':'); const mid = q.message.message_id;
   await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
-  if (k === 'rsvl' || k === 'brol') return edit(ctx, mid, 'Хорошо, позже. Кнопка остаётся.', [[['✅ Перевёл', k === 'rsvl' ? 'rsv:' + id : 'bro:']]]);
+  if (k === 'brol') { await tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } }); ctx.noTrack = false; return startScreen(ctx); }   // долг повиснет на СТАРТ
+  if (k === 'rsvl') return edit(ctx, mid, 'Хорошо, позже. Кнопка остаётся.', [[['✅ Перевёл', 'rsv:' + id]]]);
   if (k === 'rsv' || k === 'bro') {
     const tgt = k === 'rsv' ? cfg.cards.find(c => /вклад/i.test(c.name)) : cardByWord(cfg, 'Арс');
     const amt = k === 'rsv' ? ((await store(ctx, { op: 'get', k: 'res:' + id })) || {}).amount : ((await store(ctx, { op: 'get', k: 'bro' })) || {}).amount;
@@ -686,7 +688,8 @@ async function onShares(ctx, q) {
     const rid = await botRec(ctx, cfg, { dir: k === 'rsvf' ? 'PS SHOP' : 'Аренда PS5', type: 'Между своими', amount: it.amount, from: src.name, to: tgt.name,
       comment: k === 'rsvf' ? 'Резерв 20% PS SHOP' : 'Доля брата 60% аренды' });
     await store(ctx, { op: 'put', k: key, v: { amount: 0 } });
-    return edit(ctx, mid, `✅ Записал перевод ${fmt(it.amount)}: «${src.name}» → «${tgt.name}» (${rid}).`);
+    await edit(ctx, mid, `✅ Записал перевод ${fmt(it.amount)}: «${src.name}» → «${tgt.name}» (${rid}).`);
+    if (k === 'brof') { await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx); }   // перевёл брату → мишка и СТАРТ
   }
 }
 
@@ -806,7 +809,7 @@ async function startDraft(ctx, cfg, dir, text, src) {
 // следующая запись из очереди или меню направлений
 async function nextOrMenu(ctx, cfg, st) {
   if (st.queue && st.queue.length) { const nst = { d: st.queue[0], queue: st.queue.slice(1) }; return askNext(ctx, cfg, nst); }
-  await putSt(ctx, {}); return dirMenu(ctx);
+  await putSt(ctx, {}); return startScreen(ctx);
 }
 
 
@@ -982,6 +985,31 @@ async function rentScreen(ctx, st) {                        // экран кли
   rows.push([BACK]);
   return send(ctx, `<b>АРЕНДА ${esc(title)}</b>` + (o && o.paid ? '\nКлиент уже взял приставку — «Оплата» запишется как продление.' : ''), rows);
 }
+
+// ---------- СТАРТ (владелец 26.11): зелёная кнопка → главное меню; под ней висят долги, пока не оплачены ----------
+async function rentDue(ctx, cfg) {
+  const J = await journal(ctx), ars = cardByWord(cfg, 'Арс');
+  const inc = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Доход').reduce((a, x) => a + x.uzs, 0);
+  const exp = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Расход').reduce((a, x) => a + x.uzs, 0);
+  const paid = ars ? J.filter(x => x.type === 'Между своими' && x.to === ars.name).reduce((a, x) => a + x.uzs, 0) : 0;
+  return Math.round((inc - exp) * 0.6 - paid);
+}
+const SUP_LIMIT_USD = 120;                                  // долг поставщику — остаток на карте «Поставщик» больше $120
+async function supDue(ctx, cfg) {
+  const sup = cardByWord(cfg, 'Поставщик'); if (!sup) return 0;
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+  const r = g.values.find(r => String(r[0]) === sup.name); const bal = Number(r && r[8]) || 0;
+  const rate = await cbuRate(ctx, todayYmd());
+  return rate && bal / rate > SUP_LIMIT_USD ? Math.round(bal) : 0;
+}
+async function startScreen(ctx) {
+  await purge(ctx); await putSt(ctx, {});
+  const cfg = await config(ctx);
+  const rows = [[['СТАРТ', 'menu']]];
+  const b = await rentDue(ctx, cfg); if (b > 0) rows.push([[`👤 Долг брату: ${fmt(b)}`, 'dbro']]);
+  const p = await supDue(ctx, cfg); if (p > 0) rows.push([[`🧾 Долг поставщику: ${fmt(p)}`, 'dsup']]);
+  return send(ctx, PAD(9) + '👇' + PAD(9), rows);
+}
 async function onCallback(ctx, q, again) {
   const cfg = await config(ctx);
   const [k, v] = q.data.split(':');
@@ -997,6 +1025,19 @@ async function onCallback(ctx, q, again) {
       pre: 'Пишите предоплату: сумму, карту и дату брони. Например: «50 000 на Капитал, бронь 28.11».', zal: 'Пишите залог: сумму и карту. Например: «залог 300 000 на Капитал».' }[v];
     if (v === 'pre') return send(ctx, '<b>Сколько предоплата?</b>', [[['50 000', 'pa:50000'], ['100 000', 'pa:100000']], [['150 000', 'pa:150000'], ['200 000', 'pa:200000']], [BACK]]);
     return send(ctx, hint, [[BACK]]);
+  }
+  if (k === 'menu') { await gone(ctx, mid); return dirMenu(ctx); }
+  if (k === 'st0') { await gone(ctx, mid); return startScreen(ctx); }
+  if (k === 'dbro') {
+    await gone(ctx, mid); const due = await rentDue(ctx, cfg);
+    if (due <= 0) return startScreen(ctx);
+    await store(ctx, { op: 'put', k: 'bro', v: { amount: due } });
+    return send(ctx, `👤 <b>Брату перевести: ${fmt(due)} сум</b>\nПеревели?`, [[['✅ Перевёл брату', 'bro:'], ['Позже', 'brol:']]]);
+  }
+  if (k === 'dsup') {
+    await gone(ctx, mid); const due = await supDue(ctx, cfg);
+    if (due <= 0) return startScreen(ctx);
+    return send(ctx, `🧾 <b>На карте поставщика ${fmt(due)} сум</b>\nОплатили поставщику?`, [[['✅ Оплатил', 'sup'], ['Позже', 'st0']]]);
   }
   if (k === 'mr') { await gone(ctx, mid); await putSt(ctx, {}); return monthReport(ctx, v); }
   if (k === 'ro' || k === 'rp') {                    // выбран клиент / приставка нового клиента
@@ -1028,8 +1069,9 @@ async function onCallback(ctx, q, again) {
     const [oid, a] = v.split('|'); await gone(ctx, mid);
     if (a === '0') {
       if (await store(ctx, { op: 'get', k: 'pendShare' })) {   // залога нет → расчёт с братом и итоговый стикер
-        await store(ctx, { op: 'put', k: 'pendShare', v: false }); ctx.noTrack = true; await rentShare(ctx, cfg);
-        await doneMark(ctx, (await store(ctx, { op: 'get', k: 'pendDone' })) || 'Доход'); await store(ctx, { op: 'put', k: 'pendDone', v: null }); ctx.noTrack = false;
+        await store(ctx, { op: 'put', k: 'pendShare', v: false }); await store(ctx, { op: 'put', k: 'pendDone', v: null }); ctx.noTrack = true;
+        if (await rentShare(ctx, cfg)) { await putSt(ctx, {}); return; }
+        await doneMark(ctx, 'Доход'); ctx.noTrack = false;
       }
       return nextOrMenu(ctx, cfg, {});
     }
@@ -1114,11 +1156,12 @@ async function onCallback(ctx, q, again) {
         if (st.queue && st.queue.length) return nextOrMenu(ctx, cfg, st);   // следующая часть той же оплаты
         await putSt(ctx, {}); return;                                     // ждём ответ про залог
       }
-      if (rentMoney) await rentShare(ctx, cfg);
+      if (rentMoney && await rentShare(ctx, cfg)) { ctx.noTrack = false; await putSt(ctx, {}); return; }
       let mark = d.type;
       if (!d.edit && d.type === 'Залог' && d.ord && (await store(ctx, { op: 'get', k: 'pendShare' })) === d.ord) {   // залог записан → теперь расчёт и итог
-        await store(ctx, { op: 'put', k: 'pendShare', v: false }); await rentShare(ctx, cfg);
-        mark = (await store(ctx, { op: 'get', k: 'pendDone' })) || mark; await store(ctx, { op: 'put', k: 'pendDone', v: null });
+        await store(ctx, { op: 'put', k: 'pendShare', v: false }); await store(ctx, { op: 'put', k: 'pendDone', v: null });
+        if (await rentShare(ctx, cfg)) { ctx.noTrack = false; await putSt(ctx, {}); return; }
+        mark = 'Доход';
       }
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
         const uzs = d.cur === '$' ? Math.round(d.amount * await cbuRate(ctx, d.date)) : d.amount;
