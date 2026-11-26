@@ -384,7 +384,8 @@ async function onTool(ctx, q) {
   const [k, id] = q.data.split(':'); const mid = q.message.message_id;
   if (k !== 'adj') ctx.noTrack = true;                  // залоги/брони — результаты остаются
   await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
-  if (k === 'zl') {
+  if (k === 'zl') { await gone(ctx, mid); return rentOrders(ctx); }
+  if (k === 'zl_old') {
     const items = await openItems(ctx);
     await gone(ctx, mid);
     if (!items.length) return send(ctx, 'Открытых залогов и броней нет.');
@@ -413,7 +414,7 @@ async function onTool(ctx, q) {
   }
   const items = await openItems(ctx); const x = items.find(i => i.id === id);
   if (!x) return edit(ctx, mid, 'Эта запись уже закрыта.');
-  if (k === 'zr') return edit(ctx, mid, `Вернуть клиенту ${fmt(x.sum)} сум с «${x.card}»?`, [[['✅ Да, вернул', 'zry:' + id], ['Нет', 'zl:']]]);
+  if (k === 'zr') return edit(ctx, mid, `Вернуть клиенту ${fmt(x.sum)} сум с «${x.card}»?`, [[['✅ Да, вернул', 'zry:' + id], ['Нет', 'ar:list']]]);
   if (k === 'zry') {
     const rid = await botRec(ctx, cfg, { dir: x.dir, type: 'Возврат залога', amount: x.sum, from: x.card, comment: 'Возврат залога ' + x.id });
     await setItem(ctx, x, 0, 'закрыт');
@@ -854,19 +855,18 @@ async function rentPick(ctx, kind) {                        // список от
   rows.push([[kind === 'in' ? '🆕 Без предоплаты' : '🆕 Новый заказ', `ao:${kind}|new`]], [BACK]);
   return send(ctx, title + (os.length ? '' : '\nОткрытых заказов нет.'), rows);
 }
-async function rentOrders(ctx) {                            // «📋 Заказы»: открытые заказы и что с ними сделать
+async function rentOrders(ctx) {                            // «📋 Заказы»: открытые заказы; «Назад» — под последним
   const m = await getOrds(ctx), items = await openItems(ctx), os = ordList(m);
-  if (!os.length) return send(ctx, 'Открытых заказов нет.', [[BACK]]);
-  ctx.noTrack = true;
-  for (const o of os) {
-    const i = ordInfo(o, items), rows = [];
+  if (!os.length) return send(ctx, '📋 Открытых заказов нет.', [[BACK]]);
+  await send(ctx, '📋 <b>Открытые заказы</b>');
+  for (let n = 0; n < os.length; n++) {
+    const o = os[n], i = ordInfo(o, items), rows = [];
     for (const x of i.zal) rows.push([['↩️ Вернул залог', 'zr:' + x.id], ['✋ Удержал часть', 'zk:' + x.id]]);
     if (!o.paid) for (const x of i.pre) rows.push([['🔥 Бронь сгорела', 'pb:' + x.id]]);
     rows.push([['🏁 Закрыть заказ', 'ac:' + o.id]]);
-    await send(ctx, '📋 ' + i.label, rows);
+    if (n === os.length - 1) rows.push([BACK]);
+    await send(ctx, i.label, rows);
   }
-  ctx.noTrack = false;
-  return send(ctx, '⬆️ Открытые заказы', [[BACK]]);
 }
 
 // ---------- Доходы / расходы за месяц (кнопки по бокам от «Баланс», владелец 26.11) ----------
