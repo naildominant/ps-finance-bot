@@ -79,3 +79,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - Console marks unique (owner 26.11): marks of open orders are busy and hidden in «Новый клиент»; all busy → warning.
 - 26.11: test rent clients deleted: R15 (A3 payment), R16 (its 40% share), R18 (A4 prepay); A3 closed, A4 removed. Z1 real залог was returned by owner (R17) → A1 closed.
 - Balance order/labels (owner 26.11): groups [⭐ Основные: ГЛАВНАЯ(Приёмка), APPLE PAY(Узум 9028)] [ПОСТАВЩИК, АРЕНДНАЯ(Капитал)] [, НАЛ, BULKA CARD, PSРАСХОДЫ(Расходка), ИПАК, ДОЛЛАРЫ, ВКЛАД; Арс hidden (brother sees it).
+- Rent prepayment card fixed = Капитал (АРЕНДНАЯ), not asked (owner 26.11).

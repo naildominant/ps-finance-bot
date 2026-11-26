@@ -293,6 +293,7 @@ async function askNext(ctx, cfg, st) {
   if (d.type === 'Между своими' && !d.from) return void await askCard(ctx, cfg, st, 'from', 'С какой карты?');
   if (d.type === 'Между своими' && !d.to) return void await askCard(ctx, cfg, st, 'to', 'На какую карту?');
   if (isOut(d.type) && !d.from) return void await askCard(ctx, cfg, st, 'from', '💳 С какой карты или наличными?');
+  if (d.type === 'Предоплата' && d.dir === 'Аренда PS5' && !d.to) { const c = cardByWord(cfg, 'Капитал'); if (c) d.to = c.name; }   // предоплата аренды всегда на Капитал (владелец 26.11)
   if (isIn(d.type) && !d.to) return void await askCard(ctx, cfg, st, 'to', '💳 На какую карту пришли деньги?');
   if (d.type === 'Предоплата' && !d.book) { st.await = 'book'; await putSt(ctx, st);
     return void await send(ctx, '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>На какую дату бронь?</b>\nНажмите кнопку или напишите, например, <code>28.11</code>.',
