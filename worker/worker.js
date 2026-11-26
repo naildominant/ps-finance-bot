@@ -1145,7 +1145,21 @@ async function onCallback(ctx, q, again) {
     const hint = { '+': 'Пишите доход. Например: «игра 450 000 на Приёмку».', '-': 'Пишите расход. Например: «OLX 50 000 с Расходки».',
       pre: 'Пишите предоплату: сумму, карту и дату брони. Например: «50 000 на Капитал, бронь 28.11».', zal: 'Пишите залог: сумму и карту. Например: «залог 300 000 на Капитал».' }[v];
     if (v === 'pre') return send(ctx, '<b>Сколько предоплата?</b>', [[['50 000', 'pa:50000'], ['100 000', 'pa:100000']], [['150 000', 'pa:150000'], ['200 000', 'pa:200000']], [BACK]]);
+    if (T === 'Доход' || T === 'Расход') {               // сразу кнопки категорий: можно нажать или сказать голосом (владелец 27.11)
+      const gs = [...new Set(cfg.cats.filter(c => c.dir === dir && c.kind === T && !(c.dir === 'PS SHOP' && c.group === 'Поставщик')).map(c => c.group))];
+      if (dir === 'PS SHOP' && T === 'Доход') return send(ctx, hint + '\nИли скажите голосом.', [[BACK]]);
+      return send(ctx, `${T === 'Доход' ? '➕' : '➖'} <b>${T}: выберите категорию</b> или напишите / скажите голосом, например «OLX 50 000 с Расходки».`, [...chunk(gs.map((g, i) => [g, 'pg:' + i]), 2), [BACK]]);
+    }
     return send(ctx, hint, [[BACK]]);
+  }
+  if (k === 'pg') {                                  // категория нажата кнопкой → дальше сумма (текстом или голосом)
+    const gs = [...new Set(cfg.cats.filter(c => c.dir === st.dir && c.kind === st.ptype && !(c.dir === 'PS SHOP' && c.group === 'Поставщик')).map(c => c.group))];
+    const g = gs[+v]; if (!g || !st.dir) return dirMenu(ctx);
+    await gone(ctx, mid);
+    const d = draftFrom(cfg, st.dir, { type: st.ptype }, '', true);
+    const subs = cfg.cats.filter(c => c.dir === st.dir && c.kind === st.ptype && c.group === g);
+    Object.assign(d, { group: g, cat: subs.length === 1 ? subs[0].cat : null, comment: g, src: 'кнопка', n: 1, of: 1 });
+    return askNext(ctx, cfg, { d, queue: [], dir: st.dir });
   }
   if (k === 'menu') { await gone(ctx, mid); return dirMenu(ctx); }
   if (k === 'supd') { await gone(ctx, mid); await store(ctx, { op: 'put', k: 'supDebt', v: null }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); return closeSupplier(ctx, cfg); }   // долг погашен до следующего /report
