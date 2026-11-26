@@ -244,7 +244,8 @@ const SYN = {
   'Оплата аренды': ['аренд', 'клиент заплатил'], 'Коммунальные': ['коммун', 'свет', 'газ', 'вода'],
   'Домашний интернет': ['интернет'], 'Мобильная связь': ['связь', 'телефон', 'мобильн'],
   'OLX': ['olx', 'олх', 'олкс'], 'Instagram': ['instagram', 'инстаграм', 'инста', 'insta'], 'Telegram': ['telegram', 'телеграм', 'телега', ' тг '],
-  'Claude': ['claude', 'клод'], 'Непредвиденные': ['непредвиден'],
+  'Claude': ['claude', 'клод'], 'GTA 6': ['gta', 'гта'], 'Подписка': ['подписк', 'plus', 'плюс', 'ea play'], 'Аксессуары': ['аксессуар', 'джойстик', 'геймпад', 'наушник'],
+  'Консоль': ['консол', 'приставк'], 'Чистка PlayStation': ['чистк'], 'Непредвиденные': ['непредвиден'],
 };
 const norm = t => ' ' + String(t).toLowerCase().replace(/ё/g, 'е') + ' ';
 const words = x => String(x).toLowerCase().replace(/ё/g, 'е').split(/[^a-zа-я0-9]+/).filter(w => w.length >= 3 && w !== 'для');
@@ -365,7 +366,7 @@ async function askNext(ctx, cfg, st) {
   return true;
 }
 async function askGroup(ctx, cfg, st) {
-  const groups = [...new Set(cfg.cats.filter(c => c.dir === st.d.dir && c.kind === st.d.type && !(c.dir === 'PS SHOP' && c.group === 'Поставщик')).map(c => c.group))];   // «Поставщик» — только бот (владелец 27.11)
+  const groups = [...new Set(cfg.cats.filter(c => c.dir === st.d.dir && c.kind === st.d.type && !HIDDEN_GROUPS.includes(c.group)).map(c => c.group))];   // «Поставщик» — только бот (владелец 27.11)
   st.await = null; st.groups = groups; await putSt(ctx, st);
   await send(ctx, '🏷 Категория?', withBack(chunk(groups.map((g, i) => [g, 'g:' + i]), 2)));
 }
@@ -388,6 +389,8 @@ const TEST_WIPE = true;                                   // /start стирае
 // накопление (владелец 26.11): ВКЛАД = копилка на 14 000 000 сум к 06.01.2027 (вклад больше не резерв PS SHOP)
 const GOAL_SUM = 14000000, GOAL_DATE = '06.01.2027';
 const PS_RESERVE = 0;                                      // резерв PS SHOP: пока 0% — вся прибыль владельцу (26.11; было 20%)
+// служебные категории — не на кнопках (бот ставит их сам): оплата поставщику, доход по умолчанию, проценты
+const HIDDEN_GROUPS = ['Поставщик', 'Продажа', 'Проценты по вкладу'];
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
 const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };   // долги и «Назад» → СТАРТ (владелец 26.11)
 
@@ -1146,14 +1149,13 @@ async function onCallback(ctx, q, again) {
       pre: 'Пишите предоплату: сумму, карту и дату брони. Например: «50 000 на Капитал, бронь 28.11».', zal: 'Пишите залог: сумму и карту. Например: «залог 300 000 на Капитал».' }[v];
     if (v === 'pre') return send(ctx, '<b>Сколько предоплата?</b>', [[['50 000', 'pa:50000'], ['100 000', 'pa:100000']], [['150 000', 'pa:150000'], ['200 000', 'pa:200000']], [BACK]]);
     if (T === 'Доход' || T === 'Расход') {               // сразу кнопки категорий: можно нажать или сказать голосом (владелец 27.11)
-      const gs = [...new Set(cfg.cats.filter(c => c.dir === dir && c.kind === T && !(c.dir === 'PS SHOP' && c.group === 'Поставщик')).map(c => c.group))];
-      if (dir === 'PS SHOP' && T === 'Доход') return send(ctx, hint + '\nИли скажите голосом.', [[BACK]]);
-      return send(ctx, `${T === 'Доход' ? '➕' : '➖'} <b>${T}: выберите категорию</b> или напишите / скажите голосом, например «OLX 50 000 с Расходки».`, [...chunk(gs.map((g, i) => [g, 'pg:' + i]), 2), [BACK]]);
+      const gs = [...new Set(cfg.cats.filter(c => c.dir === dir && c.kind === T && !HIDDEN_GROUPS.includes(c.group)).map(c => c.group))];
+      return send(ctx, `${T === 'Доход' ? '➕' : '➖'} <b>${T}: выберите категорию</b> или напишите / скажите голосом, например ${T === 'Доход' ? '«игра PS5 450 000 на Главную»' : '«OLX 50 000 с Расходки»'}.`, [...chunk(gs.map((g, i) => [g, 'pg:' + i]), 2), [BACK]]);
     }
     return send(ctx, hint, [[BACK]]);
   }
   if (k === 'pg') {                                  // категория нажата кнопкой → дальше сумма (текстом или голосом)
-    const gs = [...new Set(cfg.cats.filter(c => c.dir === st.dir && c.kind === st.ptype && !(c.dir === 'PS SHOP' && c.group === 'Поставщик')).map(c => c.group))];
+    const gs = [...new Set(cfg.cats.filter(c => c.dir === st.dir && c.kind === st.ptype && !HIDDEN_GROUPS.includes(c.group)).map(c => c.group))];
     const g = gs[+v]; if (!g || !st.dir) return dirMenu(ctx);
     await gone(ctx, mid);
     const d = draftFrom(cfg, st.dir, { type: st.ptype }, '', true);
