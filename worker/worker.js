@@ -1200,7 +1200,7 @@ async function onCallback(ctx, q, again) {
       const rows = chunk(list.filter(b => b[0] !== MAIN), 2);
       const mi = gs.indexOf(MAIN); if (mi >= 0) rows.push([btn(MAIN, mi)]);
       const sign = T === 'Доход' ? '<tg-emoji emoji-id="5253652327734192243">➕</tg-emoji>' : '<tg-emoji emoji-id="5255775038010829248">➖</tg-emoji>';
-      return send(ctx, `${sign} <b>${T}</b>`, [...rows, [BACK]]);
+      return send(ctx, `${sign} <b>${T}</b>`, [...rows, [['↩️ Назад', 'd:' + DIRS.indexOf(dir)]]]);   // «Назад» — в свой раздел (владелец 27.11)
     }
     return send(ctx, hint, [[BACK]]);
   }
@@ -1211,7 +1211,12 @@ async function onCallback(ctx, q, again) {
     const d = draftFrom(cfg, st.dir, { type: st.ptype }, '', true);
     const subs = cfg.cats.filter(c => c.dir === st.dir && c.kind === st.ptype && c.group === g);
     Object.assign(d, { group: g, cat: subs.length === 1 ? subs[0].cat : null, comment: g, src: 'кнопка', n: 1, of: 1 });
-    return askNext(ctx, cfg, { d, queue: [], dir: st.dir });
+    const nst = { d, queue: [], dir: st.dir, ptype: st.ptype };
+    if (subs.length > 1) {                                // сразу разделы группы (владелец 27.11)
+      await putSt(ctx, nst);
+      return send(ctx, `🏷 <b>${esc(g)}</b>: что именно?`, [...chunk(subs.map((c, i) => [c.cat, 's:' + i, CAT_STYLE[g]]), 2), [['↩️ Назад', 'pt:' + (st.ptype === 'Доход' ? '+' : '-')]]]);
+    }
+    return askNext(ctx, cfg, nst);
   }
   if (k === 'menu') { await gone(ctx, mid); return dirMenu(ctx); }
   if (k === 'supd') { await gone(ctx, mid); await store(ctx, { op: 'put', k: 'supDebt', v: null }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); return closeSupplier(ctx, cfg); }   // долг погашен до следующего /report
