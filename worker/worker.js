@@ -896,6 +896,14 @@ async function monthReport(ctx, kind) {
   parts.push(cur);
   for (let i = 0; i < parts.length; i++) await send(ctx, parts[i], i === parts.length - 1 ? [[BACK]] : null);
 }
+// удалённую запись убрать из заказа; пустой неоплаченный заказ — удалить
+async function dropFromOrders(ctx, id) {
+  const m = await getOrds(ctx); let ch = false;
+  for (const k of Object.keys(m)) { if (k === '_n') continue; const o = m[k];
+    if (o.prepay.includes(id) || o.zalog.includes(id)) { o.prepay = o.prepay.filter(i => i !== id); o.zalog = o.zalog.filter(i => i !== id); ch = true;
+      if (!o.prepay.length && !o.zalog.length && !o.paid) delete m[k]; } }
+  if (ch) await putOrds(ctx, m);
+}
 async function onCallback(ctx, q) {
   const cfg = await config(ctx);
   const [k, v] = q.data.split(':');
@@ -1045,6 +1053,7 @@ async function onSavedButton(ctx, q) {
     if (f.row) await gas(ctx, [{ op: 'set', sheet: 'Журнал', range: `M${f.row}`, values: [['удалено']] }]);
     const [z] = await gas(ctx, [{ op: 'find', sheet: 'Залоги и предоплаты', col: 'A', value: id }]);
     if (z.row) await gas(ctx, [{ op: 'set', sheet: 'Залоги и предоплаты', range: `H${z.row}`, values: [['удалено']] }]);
+    await dropFromOrders(ctx, id);
     return edit(ctx, mid, `🗑 Запись ${id} удалена. Итоги в таблице пересчитаны.`);
   }
   if (k === 'fx') {
@@ -1119,6 +1128,15 @@ export default {
       const b = await req.json(); return Response.json(await tg({ env }, b.method, b.body));
     }
     if (u.pathname === '/last') return new Response(await env.KV.get('last') || '[]', { headers: { 'content-type': 'application/json' } });
+    if (u.pathname === '/rm') {                               // служебное: удалить запись как кнопкой 🗑
+      const ctx = { env, out: [] }; const id = u.searchParams.get('id');
+      const [f] = await gas(ctx, [{ op: 'find', sheet: 'Журнал', col: 'A', value: id }]);
+      if (f.row) await gas(ctx, [{ op: 'set', sheet: 'Журнал', range: `M${f.row}`, values: [['удалено']] }]);
+      const [z] = await gas(ctx, [{ op: 'find', sheet: 'Залоги и предоплаты', col: 'A', value: id }]);
+      if (z.row) await gas(ctx, [{ op: 'set', sheet: 'Залоги и предоплаты', range: `H${z.row}`, values: [['удалено']] }]);
+      await dropFromOrders(ctx, id);
+      return Response.json({ journal: f.row || null, items: z.row || null, ords: await getOrds(ctx) });
+    }
     if (u.pathname === '/ce') {
       const l = await env.KV.list({ prefix: 'ce:' }); const out = {};
       for (const k of l.keys) out[k.name.slice(3)] = JSON.parse(await env.KV.get(k.name));
