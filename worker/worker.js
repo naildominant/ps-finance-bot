@@ -164,6 +164,28 @@ A shop receipt is ALWAYS incoming=false. Receipt number, check number, terminal 
   return parts.join(', ');
 }
 
+// скриншот отчёта HPS: «Долг: 52,42 USDT | ≈ 4 607.72 RUB» → { usdt, rub }
+async function readHps(ctx, bytes) {
+  const prompt = 'This is a screenshot of a supplier debt report in Telegram. Find the line like "Долг: 52,42 USDT | ≈ 4 607.72 RUB". Return ONLY JSON {"usdt": number or null, "rub": number or null}. Use dot as decimal separator, no spaces in numbers. Do not invent.';
+  const url = 'data:image/jpeg;base64,' + b64(bytes);
+  const r = await ctx.env.AI.run(VISION, { messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url } }] }], max_tokens: 80, temperature: 0 });
+  let j = r.response;
+  if (typeof j !== 'object' || !j) { const m = String(j || '').match(/\{[\s\S]*\}/); if (!m) return null; try { j = JSON.parse(m[0]); } catch (e) { return null; } }
+  const rub = num(j.rub), usdt = num(j.usdt);
+  return rub > 0 ? { rub, usdt: usdt > 0 ? usdt : null } : null;
+}
+// сохранить долг поставщику и показать СТАРТ
+async function setSupDebt(ctx, h) {
+  const uzs = Math.round(h.rub * RUB_TO_UZS);
+  if (!ctx.dry) await store(ctx, { op: 'put', k: 'supDebt', v: { ...h, uzs, at: Date.now() } });
+  await putSt(ctx, {});
+  const usd = uzs / ((await cbuRate(ctx, todayYmd())) || 12000);
+  ctx.noTrack = true;
+  await send(ctx, `🧾 <b>Долг поставщику: ${fmt(uzs)} сум</b>\n${h.usdt ? String(h.usdt).replace('.', ',') + ' USDT ≈ ' : ''}${String(h.rub).replace('.', ',')} RUB × ${RUB_TO_UZS}` +
+    (usd > SUP_LIMIT_USD ? '\nБольше $120 — кнопка долга будет на СТАРТ.' : '\nМеньше $120 — пока не напоминаю.'));
+  ctx.noTrack = false; return startScreen(ctx);
+}
+
 // ---------- Разбор текста ИИ (одна или несколько записей) ----------
 async function aiParse(ctx, cfg, dir, text) {
   const catList = (dd, k) => [...new Set(cfg.cats.filter(c => c.dir === dd && c.kind === k).map(c => c.group === c.cat ? c.cat : `${c.group} / ${c.cat}`))].join('; ');
@@ -712,6 +734,11 @@ async function onMessage(ctx, m) {
     ctx.ptype = st.ptype; ctx.ord = st.ord; ctx.ps = st.ps; return startDraft(ctx, cfg, st.dir || null, said, 'голос');
   }
   const img = m.photo ? m.photo[m.photo.length - 1] : (m.document && /^image\//.test(m.document.mime_type || '') ? m.document : null);
+  if (img && st.tool && st.tool.kind === 'hps') {        // скрин отчёта HPS после напоминания
+    await send(ctx, '📷 Читаю отчёт поставщика…');
+    const h = await readHps(ctx, await tgFile(ctx, img.file_id)).catch(() => null);
+    return h ? setSupDebt(ctx, h) : send(ctx, '📷 Не нашёл на скрине «Долг … RUB». Напишите сумму в рублях, например <code>4607</code>.');
+  }
   if (img) {
     await send(ctx, '📷 Читаю фото…');
     const seen = await readReceipt(ctx, await tgFile(ctx, img.file_id));
@@ -722,13 +749,9 @@ async function onMessage(ctx, m) {
   }
   if (m.document) return send(ctx, 'Этот файл я не читаю. Пришлите фото, голосовое или текст.');
   if (!text) return;
-  { const h = parseHps(text); if (h) {                     // пересланный ответ HPS на /report
-    const uzs = Math.round(h.rub * RUB_TO_UZS);
-    if (!ctx.dry) await store(ctx, { op: 'put', k: 'supDebt', v: { ...h, uzs, at: Date.now() } });
-    ctx.noTrack = true;
-    await send(ctx, `🧾 <b>Долг поставщику: ${fmt(uzs)} сум</b>\n${String(h.usdt).replace('.', ',')} USDT ≈ ${String(h.rub).replace('.', ',')} RUB × ${RUB_TO_UZS}` + (h.usdt > SUP_LIMIT_USD ? '\nБольше $120 — кнопка долга будет на СТАРТ.' : '\nМеньше $120 — пока не напоминаю.'));
-    ctx.noTrack = false; return startScreen(ctx);
-  } }
+  { const h = parseHps(text); if (h) return setSupDebt(ctx, h); }   // пересланный ответ HPS на /report
+  { const r = text.match(/^(?:долг\s*(?:поставщику)?\s*)?([\d\s.,]+)\s*(?:руб[а-я.]*|₽|rub)$/i);   // «4607 руб», «долг 4 607,72 ₽»
+    if (r || (st.await === 'tool' && st.tool && st.tool.kind === 'hps' && num(text) > 0)) return setSupDebt(ctx, { rub: num(r ? r[1] : text), usdt: null }); }
   if (st.await === 'tool' && st.tool) return onToolText(ctx, cfg, st, text);
   if (/закрыл[а-я]*\s+(оплат|поставщ)/i.test(text)) return closeSupplier(ctx, cfg);
   if (st.await === 'amount' && st.d) {
@@ -1011,12 +1034,15 @@ function parseHps(text) {
 }
 async function supDue(ctx) {
   const x = await store(ctx, { op: 'get', k: 'supDebt' });
-  return x && x.usdt > SUP_LIMIT_USD ? x.uzs : 0;
+  if (!x || !x.uzs) return 0;
+  const usd = x.usdt || x.uzs / ((await cbuRate(ctx, todayYmd())) || 12000);
+  return usd > SUP_LIMIT_USD ? x.uzs : 0;
 }
 async function supReminder(env) {
   const ctx = { env, out: [] }; const cfg = await config(ctx, true);
   ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
-  await send(ctx, '🧾 <b>23:03 — проверим долг поставщику</b>\nНапишите <code>/report</code> в группе «PSSHOP x HPS» и перешлите ответ сюда. Я посчитаю долг в сумах.');
+  const st = await getSt(ctx); if (!st.d) await putSt(ctx, { tool: { kind: 'hps' }, await: 'tool' });   // ждём рубли, скрин или пересылку
+  await send(ctx, '🧾 <b>23:03 — проверим долг поставщику</b>\nНапишите <code>/report</code> в группе «PSSHOP x HPS», потом пришлите сюда:\n• сумму в рублях, например <code>4607</code>\n• или скрин ответа\n• или перешлите ответ.\nЯ умножу рубли на 202.', [[['Позже', 'st0']]]);
 }
 async function startScreen(ctx) {
   await purge(ctx); await putSt(ctx, {});
@@ -1331,6 +1357,7 @@ export default {
     if (u.pathname === '/testai' && req.method === 'POST') {   // проверка распознавания: ?t=voice|photo, тело — файл
       const bytes = new Uint8Array(await req.arrayBuffer()), ctx = { env };
       if (u.searchParams.get('m')) VISION = u.searchParams.get('m');
+      if (u.searchParams.get('t') === 'hps') return Response.json({ hps: await readHps(ctx, bytes).catch(e => String(e)) });
       try { return Response.json({ text: u.searchParams.get('t') === 'photo' ? await readReceipt(ctx, bytes) : await transcribe(ctx, bytes), raw: ctx.raw }); }
       catch (e) { return Response.json({ error: String(e && e.stack || e) }); }
     }
