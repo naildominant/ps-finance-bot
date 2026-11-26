@@ -915,7 +915,12 @@ async function rentStart(ctx) {
   rows.push([['🆕 Новый клиент', 'ro:new']], [BACK]);
   return send(ctx, '<b>АРЕНДА: какой клиент?</b>', rows);
 }
-const rentConsole = ctx => send(ctx, '<b>Новый клиент: какая приставка?</b>', [PS_MARKS.map(p => [p, 'rp:' + p]), [BACK]]);
+async function rentConsole(ctx) {                          // занятые приставки (у открытых заказов) не предлагаем
+  const busy = ordList(await getOrds(ctx)).map(o => o.ps).filter(Boolean);
+  const free = PS_MARKS.filter(p => !busy.includes(p));
+  if (!free.length) return send(ctx, '⚠️ Все приставки заняты: △ ✕ □ уже у клиентов. Закройте заказ, чтобы освободить приставку.', [[BACK]]);
+  return send(ctx, '<b>Новый клиент: какая приставка?</b>' + (busy.length ? `\nЗаняты: ${busy.join(' ')}` : ''), [free.map(p => [p, 'rp:' + p]), [BACK]]);
+}
 async function rentScreen(ctx, st) {                        // экран клиента: оплата (она же продление) / предоплата / залог
   const m = await getOrds(ctx), items = await openItems(ctx), o = st.ord !== 'new' ? m[st.ord] : null;
   const title = o ? ordInfo(o, items).label : `${st.ps || ''} новый клиент`;
@@ -949,6 +954,7 @@ async function onCallback(ctx, q, again) {
   if (k === 'ro' || k === 'rp') {                    // выбран клиент / приставка нового клиента
     await gone(ctx, mid);
     if (k === 'ro' && v === 'new') return rentConsole(ctx);
+    if (k === 'rp' && ordList(await getOrds(ctx)).some(o => o.ps === v)) return rentConsole(ctx);   // уже занята
     const nst = k === 'ro' ? { dir: 'Аренда PS5', ord: v } : { dir: 'Аренда PS5', ord: 'new', ps: v };
     await putSt(ctx, nst); return rentScreen(ctx, nst);
   }
