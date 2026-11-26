@@ -865,7 +865,7 @@ async function afterOrder(ctx, cfg, d, id) {
     }
   }
   await putOrds(ctx, m);
-  if (ask) { await send(ctx, `🔐 <b>Залог по заказу ${o.id} взяли?</b>`, [[['Нет', `zg:${o.id}|0`]], [['100 000', `zg:${o.id}|100000`], ['200 000', `zg:${o.id}|200000`], ['300 000', `zg:${o.id}|300000`]], [['Другая сумма', `zg:${o.id}|x`]]]); }
+  if (ask) { await send(ctx, `🔐 <b>Залог по заказу ${o.id} взяли?</b>`, [[['Да', `zg:${o.id}|x`], ['Нет', `zg:${o.id}|0`]]]); }
   return ask;
 }
 async function closeOrdIfDone(ctx, itemId) {               // заказ закрывается, когда нет открытых предоплат/залогов и он оплачен
