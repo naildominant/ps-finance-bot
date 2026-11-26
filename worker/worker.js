@@ -28,6 +28,11 @@ const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data, style])
   return /^https?:/.test(data) ? { ...b, url: data } : { ...b, callback_data: data }; })) });
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU/edit';
 const send = async (ctx, text, rows) => {
+  if (ctx.editMid) {                                       // «Назад»: экран меняется на месте, без анимации удаления (владелец 26.11)
+    const mid = ctx.editMid; ctx.editMid = null;
+    const e = await tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: mid, text, parse_mode: 'HTML', reply_markup: kb(rows || []) });
+    if (e && e.ok) { if (ctx.trail && !ctx.noTrack) ctx.trail.push(mid); return e; }
+  }
   const r = await tg(ctx, 'sendMessage', { chat_id: ctx.chat, text, parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
   if (ctx.trail && !ctx.noTrack && r && r.ok) ctx.trail.push(r.result.message_id);   // «лишнее» — сотрём при возврате в меню
   return r;
@@ -37,8 +42,7 @@ const send = async (ctx, text, rows) => {
 const unkb = (ctx, mid) => tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } }).catch(() => {});   // убрать кнопки, сообщение оставить
 const gone = (ctx, mid) => tg(ctx, 'deleteMessage', { chat_id: ctx.chat, message_id: mid }).catch(() => {});
 async function purge(ctx) {
-  if (ctx.noPurge) return;                                // «Назад» ничего не стирает (владелец 26.11)
-  const ids = [...((await store(ctx, { op: 'get', k: 'trail' })) || []), ...(ctx.trail || [])].filter(i => !(ctx.keep || []).includes(i));
+  const ids = [...((await store(ctx, { op: 'get', k: 'trail' })) || []), ...(ctx.trail || [])].filter(i => !(ctx.keep || []).includes(i) && i !== ctx.editMid);
   if (ctx.trail) ctx.trail.length = 0;
   await store(ctx, { op: 'put', k: 'trail', v: [] });
   for (const i of [...new Set(ids)]) await gone(ctx, i);
@@ -1111,7 +1115,7 @@ async function onCallback(ctx, q, again) {
     await putSt(ctx, { tool: { kind: 'hpsadd' }, await: 'tool' });
     return send(ctx, '🧾 Сколько <b>рублей</b> ушло поставщику на эту заявку? Например <code>1929</code>.', [[BACK]]);
   }
-  if (k === 'st0') { ctx.noPurge = true; await unkb(ctx, mid); return startScreen(ctx); }
+  if (k === 'st0') { ctx.editMid = mid; return startScreen(ctx); }
   if (k === 'dbro') {
     await gone(ctx, mid); const due = await rentDue(ctx, cfg);
     if (due <= 0) return startScreen(ctx);
@@ -1186,9 +1190,9 @@ async function onCallback(ctx, q, again) {
     if (dir === 'Аренда PS5') return rentStart(ctx);
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
-  if (k === 'bk' && st.tool) { ctx.noPurge = true; await unkb(ctx, mid); await putSt(ctx, {}); return dirMenu(ctx); }
+  if (k === 'bk' && st.tool) { ctx.editMid = mid; await putSt(ctx, {}); return dirMenu(ctx); }
   if (k === 'bk') {
-    ctx.noPurge = true; await unkb(ctx, mid);
+    ctx.editMid = mid;
     if (st.editDir) { st.editDir = false; return reshow(ctx, st); }
     if (st.hist && st.hist.length) { st.d = JSON.parse(st.hist.pop()); st.await = null; return complete(st.d) ? reshow(ctx, st) : askNext(ctx, cfg, st); }
     await putSt(ctx, {}); return dirMenu(ctx);
