@@ -1186,7 +1186,7 @@ async function getDeals(ctx) { return (await store(ctx, { op: 'get', k: 'deals' 
 const putDeals = (ctx, m) => store(ctx, { op: 'put', k: 'deals', v: m });
 const dealList = m => Object.keys(m).filter(k => k !== '_n' && !m[k].closed).map(k => m[k]);
 async function leadexScreen(ctx) {
-  return send(ctx, '<b>LEADEX</b>', [[['Поступление', 'lq:in', 'success']], [['Предоплата', 'lq:pre', 'primary'], ['Расходы', 'lq:exp', 'danger']], [['Вложения', 'lq:inv']], [['📄 Таблица', 'lq:tab']], [BACK]]);
+  return send(ctx, '<b>LEADEX</b>', [[['➕ Поступление', 'lq:in', 'success']], [['🔄 Предоплата', 'lq:pre', 'primary'], ['➖ Расходы', 'lq:exp', 'danger']], [['💼 Вложения', 'lq:inv']], [['📄 Таблица', 'lq:tab']], [BACK]]);
 }
 // при поступлении по сделке: предоплаты этой сделки → доход (без карты: деньги уже на карте), сделка закрыта; вернуть сумму для дележа
 async function releaseDeal(ctx, cfg, d) {
@@ -1361,7 +1361,7 @@ async function onCallback(ctx, q, again) {
     await putSt(ctx, { dir });
     const extra = [];                                       // «Закрыл оплату» убран (владелец 26.11): оплата — через «Долг поставщику» на СТАРТ
     extra.push([BACK]);                                   // назад в главное меню
-    if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [[['+', 'pt:+']], [['−', 'pt:-']], [['📉 Расходы', 'mr:out|0']], ...extra]);   // на всю ширину, с подписью (владелец 27.11)
+    if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP</b>', [[['+', 'pt:+']], [['−', 'pt:-']], [['📉 Расходы', 'mr:out|0']], ...extra]);   // на всю ширину, с подписью (владелец 27.11)
     if (dir === 'Аренда PS5') return rentStart(ctx);
     if (dir === 'Leadex') return leadexScreen(ctx);
     if (dir === 'Личное') return send(ctx, '<b>ЛИЧНОЕ</b>', [[['−', 'pt:-']], [['+', 'pt:+']], [['🤝 Дал в долг', 'ln:new', 'primary']], [['📉 Расходы', 'mr:out|3']], ...extra]);   // владелец 27.11
