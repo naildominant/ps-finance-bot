@@ -1012,15 +1012,16 @@ async function rentOrders(ctx) {                            // «📋 Заказ
 
 // ---------- Доходы / расходы за месяц (кнопки по бокам от «Баланс», владелец 26.11) ----------
 const WD = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
-async function monthReport(ctx, kind) {
+async function monthReport(ctx, kind, only) {   // only — индекс направления (кнопка в разделе)
   const [j] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: 'A2:P3000' }]);
   const ym = todayYmd().slice(0, 7), T = kind === 'in' ? 'Доход' : 'Расход';
   const recs = j.values.filter(r => r[0] && r[12] !== 'удалено' && r[4] === T && r[1] && r[1].d)
     .map(r => ({ id: r[0], day: ymdT(new Date(r[1].d + TZ_MS)), dir: r[3], cat: r[6] || r[5] || '', uzs: Number(r[7]) || 0, usd: Number(r[8]) || 0, card: kind === 'in' ? r[11] : r[10] }))
-    .filter(x => x.day.startsWith(ym) && !/^Доля из/.test(x.cat));      // доли — внутренние начисления, не двойной счёт
+    .filter(x => x.day.startsWith(ym) && !/^Доля из/.test(x.cat) && (only == null || x.dir === DIRS[only]));      // доли — внутренние начисления, не двойной счёт
   const [y, m] = ym.split('-').map(Number);
-  const head = `${kind === 'in' ? '📈 <b>Доходы' : '📉 <b>Расходы'} за ${MONTHS[m - 1].toLowerCase()} ${y}</b>`;
-  if (!recs.length) return send(ctx, head + '\n\nЗаписей пока нет.', [[BACK]]);
+  const head = `${kind === 'in' ? '📈 <b>Доходы' : '📉 <b>Расходы'}${only != null ? ' ' + (DIRS[only] === 'Leadex' ? 'LEADEX' : DIRS[only]) : ''} за ${MONTHS[m - 1].toLowerCase()} ${y}</b>`;
+  const back = only != null ? [['↩️ Назад', 'd:' + only]] : [BACK];   // «Назад» — в свой раздел
+  if (!recs.length) return send(ctx, head + '\n\nЗаписей пока нет.', [back]);
   // сводка (владелец 27.11, вариант 1): по направлениям, внутри — категории от большей суммы к меньшей, без списка записей
   const byDir = {}; let tot = 0;
   for (const x of recs) {
@@ -1032,7 +1033,7 @@ async function monthReport(ctx, kind) {
   const name = d => d === 'Leadex' ? 'LEADEX' : d;
   for (const d of [...DIRS, ...Object.keys(byDir).filter(k => !DIRS.includes(k))]) {
     const D = byDir[d]; if (!D) continue;
-    L.push(`<b>${esc(name(d))}: ${fmt(D.sum)}</b>`);
+    if (only == null) L.push(`<b>${esc(name(d))}: ${fmt(D.sum)}</b>`);   // в разделе — без лишнего заголовка
     for (const [c, v] of Object.entries(D.cats).sort((a, b) => b[1] - a[1])) L.push(`   ${esc(c)} — ${fmt(v)}`);
     L.push('');
   }
@@ -1040,7 +1041,7 @@ async function monthReport(ctx, kind) {
   const parts = []; let cur = '';                         // Telegram: не больше 4096 знаков — режем
   for (const line of L) { if ((cur + line).length > 3800) { parts.push(cur); cur = ''; } cur += line + '\n'; }
   parts.push(cur);
-  for (let i = 0; i < parts.length; i++) await send(ctx, parts[i], i === parts.length - 1 ? [[BACK]] : null);
+  for (let i = 0; i < parts.length; i++) await send(ctx, parts[i], i === parts.length - 1 ? [back] : null);
 }
 // удалённую запись убрать из заказа; пустой неоплаченный заказ — удалить
 async function dropFromOrders(ctx, id) {
@@ -1232,7 +1233,7 @@ async function onCallback(ctx, q, again) {
     return send(ctx, due > 0 ? `🧾 <b>Долг поставщику: ${fmt(due)} сум</b>` : '🧾 <b>Поставщику есть долг</b>, сумма не записана.',
       [[['✍️ Добавить рубли', 'sp:rub']], [['✅ Оплатил', 'supd'], ['Позже', 'st0']]]);
   }
-  if (k === 'mr') { await gone(ctx, mid); await putSt(ctx, {}); return monthReport(ctx, v); }
+  if (k === 'mr') { await gone(ctx, mid); await putSt(ctx, {}); const [kind, di] = v.split('|'); return monthReport(ctx, kind, di === undefined ? null : +di); }
   if (k === 'rs') {                                  // проставить значок приставки существующему заказу
     const [oid, p] = v.split('|'); const m = await getOrds(ctx);
     if (m[oid] && !ordList(m).some(o => o.ps === p)) { m[oid].ps = p; await putOrds(ctx, m); }
@@ -1313,7 +1314,7 @@ async function onCallback(ctx, q, again) {
     await putSt(ctx, { dir });
     const extra = [];                                       // «Закрыл оплату» убран (владелец 26.11): оплата — через «Долг поставщику» на СТАРТ
     extra.push([BACK]);                                   // назад в главное меню
-    if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [[['+', 'pt:+']], [['−', 'pt:-']], ...extra]);   // на всю ширину, с подписью (владелец 27.11)
+    if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP ?</b>', [[['+', 'pt:+']], [['−', 'pt:-']], [['📉 Расходы за месяц', 'mr:out|0']], ...extra]);   // на всю ширину, с подписью (владелец 27.11)
     if (dir === 'Аренда PS5') return rentStart(ctx);
     if (dir === 'Leadex') return leadexScreen(ctx);
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
