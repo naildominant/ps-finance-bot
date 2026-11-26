@@ -316,7 +316,7 @@ const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) :
 // эмодзи владельца после записи (владелец 26.11): расход — 💸; доход — 🤑
 const DONE_EMO = { 'Расход': '5319172285762919855', 'Доход': '5391292736647209211' };
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
-const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(3) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(5) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['💳 Баланс', 'adj']], [['📄 Открыть таблицу', SHEET_URL]]]); };
+const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(3) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(5) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['📄 Открыть таблицу', SHEET_URL]]]); };
 
 // ---------- Запись в таблицу ----------
 async function save(ctx, cfg, d) {
@@ -868,6 +868,34 @@ async function rentOrders(ctx) {                            // «📋 Заказ
   ctx.noTrack = false;
   return send(ctx, '⬆️ Открытые заказы', [[BACK]]);
 }
+
+// ---------- Доходы / расходы за месяц (кнопки по бокам от «Баланс», владелец 26.11) ----------
+const WD = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+async function monthReport(ctx, kind) {
+  const [j] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: 'A2:P3000' }]);
+  const ym = todayYmd().slice(0, 7), T = kind === 'in' ? 'Доход' : 'Расход';
+  const recs = j.values.filter(r => r[0] && r[12] !== 'удалено' && r[4] === T && r[1] && r[1].d)
+    .map(r => ({ id: r[0], day: ymdT(new Date(r[1].d + TZ_MS)), dir: r[3], cat: r[6] || r[5] || '', uzs: Number(r[7]) || 0, usd: Number(r[8]) || 0, card: kind === 'in' ? r[11] : r[10] }))
+    .filter(x => x.day.startsWith(ym) && !/^Доля из/.test(x.cat));      // доли — внутренние начисления, не двойной счёт
+  const [y, m] = ym.split('-').map(Number);
+  const head = `${kind === 'in' ? '📈 <b>Доходы' : '📉 <b>Расходы'} за ${MONTHS[m - 1].toLowerCase()} ${y}</b>`;
+  if (!recs.length) return send(ctx, head + '\n\nЗаписей пока нет.', [[BACK]]);
+  const byDay = {}, byDir = {}; let tot = 0;
+  for (const x of recs) { (byDay[x.day] = byDay[x.day] || []).push(x); byDir[x.dir] = (byDir[x.dir] || 0) + x.uzs; tot += x.uzs; }
+  const L = [head, ''];
+  for (const day of Object.keys(byDay).sort().reverse()) {
+    const xs = byDay[day], dt = new Date(day + 'T00:00:00Z');
+    L.push(`🗓 <b>${day.slice(8, 10)}.${day.slice(5, 7)} · ${WD[dt.getUTCDay()]}</b>`);
+    for (const x of xs) L.push(`   • <b>${fmt(x.uzs)}</b>${x.usd ? ` ($${fmt(x.usd)})` : ''} — ${esc(x.dir)} · ${esc(x.cat)}${x.card ? ' · ' + esc(String(x.card).replace(/ \(.*\)$/, '')) : ''}`);
+    L.push(`   <i>за день: ${fmt(xs.reduce((a, x) => a + x.uzs, 0))}</i>`, '');
+  }
+  L.push('━━━━━━━━━━', `${kind === 'in' ? 'Всего доходов' : 'Всего расходов'}: <b>${fmt(tot)} сум</b>`, '');
+  for (const d of DIRS) if (byDir[d]) L.push(`${d}: <b>${fmt(byDir[d])}</b>`);
+  const parts = []; let cur = '';                         // Telegram: не больше 4096 знаков — режем
+  for (const line of L) { if ((cur + line).length > 3800) { parts.push(cur); cur = ''; } cur += line + '\n'; }
+  parts.push(cur);
+  for (let i = 0; i < parts.length; i++) await send(ctx, parts[i], i === parts.length - 1 ? [[BACK]] : null);
+}
 async function onCallback(ctx, q) {
   const cfg = await config(ctx);
   const [k, v] = q.data.split(':');
@@ -884,6 +912,7 @@ async function onCallback(ctx, q) {
     if (v === 'pre') return send(ctx, '<b>Сколько предоплата?</b>', [[['50 000', 'pa:50000'], ['100 000', 'pa:100000']], [['150 000', 'pa:150000'], ['200 000', 'pa:200000']], [BACK]]);
     return send(ctx, hint, [[BACK]]);
   }
+  if (k === 'mr') { await gone(ctx, mid); await putSt(ctx, {}); return monthReport(ctx, v); }
   if (k === 'ar') {                                  // экран аренды: поступление / залог / заказы
     await gone(ctx, mid); await putSt(ctx, { dir: 'Аренда PS5' });
     return v === 'list' ? rentOrders(ctx) : rentPick(ctx, v);
