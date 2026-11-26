@@ -650,10 +650,9 @@ async function rentShare(ctx, cfg) {
   let nid = '';
   if (mineAdd > 0) nid = await botRec(ctx, cfg, { dir: 'Личное', type: 'Доход', group: 'Доля из аренды (40%)', cat: 'Доля из аренды (40%)', amount: mineAdd, comment: 'Доля 40% аренды' });
   const due = Math.round(profit * 0.6 - paid);
-  const L = [`🎮 <b>Аренда PS5, за всё время:</b> доходы ${fmt(inc)} − расходы ${fmt(exp)} = прибыль <b>${fmt(profit)}</b>`,
-    `Доля брата 60%: ${fmt(Math.round(profit * 0.6))}, уже переведено: ${fmt(paid)}`,
-    `👉 <b>К переводу брату: ${fmt(Math.max(0, due))}</b>`];
-  if (nid) L.push(`Ваша доля 40%: +${fmt(mineAdd)} записал в «Личное» (${nid})`);
+  const L = [`👤 <b>Брату перевести: ${fmt(Math.max(0, due))} сум</b>`,     // коротко (владелец 26.11); подробности — в таблице «Доли»
+    `<i>60% прибыли аренды, уже отдано ${fmt(paid)}</i>`];
+  if (nid) L.push('', `🧡 Ваши 40%: +${fmt(mineAdd)} сум → Личное`);
   if (due <= 0) return send(ctx, L.join('\n'));
   await store(ctx, { op: 'put', k: 'bro', v: { amount: due } });
   return send(ctx, L.join('\n'), [[['✅ Перевёл брату', 'bro:'], ['Позже', 'brol:']]]);
