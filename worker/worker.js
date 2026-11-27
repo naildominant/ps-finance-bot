@@ -1364,7 +1364,7 @@ async function debtRows(ctx, cfg) {                         // кнопки до
   const b = await rentDue(ctx, cfg); if (b > 0) rows.push([[`💪 Брат: ${fmt(b)}`, 'dbro']]);   // 💪 — выбор владельца (27.11)
   const p = await supDue(ctx);   // «Позже» — только «есть долг», без суммы, пока рубли не вписаны (владелец 27.11)
   if (await store(ctx, { op: 'get', k: 'supUnknown' })) rows.push([['🧾 Поставщик: есть долг', 'dsup']]);
-  else if (p > 0) rows.push([[`🧾 Поставщику скинуть: ${fmt(p)}`, 'dsup']]);
+  else if (p > 0) rows.push([[`🧾 Поставщику: ${fmt(p)}`, 'dsup']]);   // /claude №8
   return rows;
 }
 async function startScreen(ctx) {
@@ -1821,6 +1821,13 @@ async function onCallback(ctx, q, again) {
   }
   if (k === 'dsup') {
     await gone(ctx, mid); const due = (await store(ctx, { op: 'get', k: 'supUnknown' })) ? 0 : await supDue(ctx);
+    if (due > 0) {                                   // /claude №8: долг, что на карте ПОСТАВЩИК и сколько докинуть с основной (вверх до 10 000)
+      let card = 0; try { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]); const r = g.values.find(r => String(r[0]).startsWith('Поставщик')); card = Number(r && r[8]) || 0; } catch (e) {}
+      const top = due > card ? supRound(due - card) : 0;
+      return send(ctx, `🧾 <b>Поставщику: ${fmt(due)} сум</b>\n💳 На карте ПОСТАВЩИК: <b>${fmt(Math.round(card))} сум</b>\n` +
+        (top ? `👉 <b>Докинуть с основной карты: ${fmt(top)} сум</b>` : '✅ <b>На карте хватает, докидывать не нужно</b>'),
+        [[['✍️ Добавить рубли', 'sp:rub']], [['✅ Оплатил', 'supd'], ['Позже', 'st0']]]);
+    }
     return send(ctx, due > 0 ? `🧾 <b>Поставщику скинуть: ${fmt(due)} сум</b>` : '🧾 <b>Поставщику есть долг</b>, сумма не записана.',
       [[['✍️ Добавить рубли', 'sp:rub']], [['✅ Оплатил', 'supd'], ['Позже', 'st0']]]);
   }
