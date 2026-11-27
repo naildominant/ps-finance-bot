@@ -130,7 +130,8 @@ function parseFuture(s) {
   const r = parseDate(s); if (!r) return null;
   return !/\d{4}/.test(String(s)) && r < todayYmd() ? `${Number(r.slice(0, 4)) + 1}${r.slice(4)}` : r;
 }
-function parseDate(s) {
+function parseDate(s) { const r = parseDate0(s); return r && ymdT(new Date(Date.parse(r))) === r ? r : null; }   // 31.11, 30.02 — не дата
+function parseDate0(s) {
   s = String(s || '').trim().toLowerCase();
   if (!s || s === 'сегодня') return todayYmd();
   if (s === 'вчера') return shiftYmd(todayYmd(), -1);
@@ -330,7 +331,7 @@ function cardInText(cfg, text) {
   if (/булк/.test(t)) { const v = cfg.cards.find(c => /^Булка/.test(c.name)); if (v) return v; }
   if (/(apple|эпл|эппл|эйпл)|\sузум/.test(t)) return cfg.cards.find(c => c.name === 'Apple Pay') || null;   // карта «Узум 9028» = Apple Pay (владелец 27.11)
   return cfg.cards.find(c => { const short = c.name.toLowerCase().split(' (')[0].replace(/ё/g, 'е'), dig = (c.name.match(/\d{4}/) || [])[0];
-    return (short.length >= 3 && t.includes(short.slice(0, Math.max(3, short.length - 1)))) || (dig && t.includes(dig)); }) || null;
+    return (short.length >= 3 && new RegExp('[^а-яёa-z]' + short.slice(0, Math.max(3, short.length - 1)).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(t)) || (dig && t.includes(dig)); }) || null;   // с начала слова: «канал» ≠ Нал
 }
 function matchCard(cfg, s) {
   if (!s) return null;
@@ -522,6 +523,7 @@ async function save(ctx, cfg, d) {
   await gas(ctx, ops);
   if (d.dir === 'Аренда PS5' || (d.type === 'Между своими' && /^Арс/.test(d.to || ''))) await rentEvent(ctx, d, id).catch(() => {});   // → рабочая группа
   await wifeEvent(ctx, d, id).catch(() => {});   // жена: её трата → владельцу; перевод на BULKA → жене
+  if (d.type === 'Между своими' && /^Арс/.test(d.to || '') && !ctx.dry) await store(ctx, { op: 'put', k: 'bro', v: { amount: 0 } });   // перевод брату записан — старая кнопка «Перевёл» больше не сработает
   return id;
 }
 async function loadRow(ctx, id) {
@@ -707,7 +709,7 @@ async function onWife(ctx, m, q, cfg) {
     { const st = await getSt(ctx);
       if (st.await === 'wgdate' && k === 'cl') return edit(ctx, mid, '📅 <b>К какой дате?</b> 🌸\nВыбери в календаре или напиши, например <code>8 марта</code>', wifeCal(await calendar(ctx, v, true)));
       if (st.await === 'wgdate' && k === 'cd') { await gone(ctx, mid); return onWife(ctx, { message_id: 0, text: v, from: q.from, chat: q.message.chat }, null, cfg); } }   // дата цели из календаря
-    if (!WIFE_OK.includes(k)) return;                   // остальные кнопки — не для неё
+    if (k === 'noop' || !WIFE_OK.includes(k)) return;   // остальные кнопки — не для неё
     return onCallback(ctx, q, true);
   }
   const text = (m.text || '').trim();
@@ -740,7 +742,7 @@ async function onWife(ctx, m, q, cfg) {
     const g = { ...st.wg, due: y }; await wInboxAdd(ctx, { kind: 'goal', name: g.name, amount: g.amount, due: y, chat: ctx.chat }); await putSt(ctx, {});
     await send(ctx, `🎀 <b>Отправила Наилю!</b>\n${esc(g.name)} — ${fmt(g.amount)} сум до ${dm(y)} ✨\nКак ответит — напишу сюда 💖`);
     return wifeStart(ctx); }
-  if (st.await === 'tool' && st.tool && st.tool.kind === 'interest') return onToolText(ctx, cfg, st, text);   // 1-е число: остаток вклада
+  if (st.await === 'tool' && st.tool && st.tool.kind === 'interest' && parseAmount(text)) return onToolText(ctx, cfg, st, text);   // 1-е число: остаток вклада
   if (st.await === 'wsum') {                            // «Дай денюжку»: сумма → на что
     const a = parseAmount(text); if (!a) return send(ctx, 'Напишите сумму числом, например <code>300000</code>.');
     await putSt(ctx, { wreq: a.amount });
@@ -864,13 +866,18 @@ async function onRishat(ctx, m, q, cfg) {
       return send(ctx, '⚔️ <b>Пиши расход</b> — текстом или фото чека.\nНапример: <code>реклама 200000</code> 🍥', [[['↩️ Меню', 'xm']]]); }
     if (k === 'xq') { await putSt(ctx, { await: 'xqsum' });
       return send(ctx, '🙏 <b>Сколько нужно вложить?</b> Напиши сумму, например <code>500000</code>', [[['↩️ Меню', 'xm']]]); }
-    if (!RISHAT_OK.includes(k)) return;
+    if (k === 'noop' || !RISHAT_OK.includes(k)) return;
     return onCallback(ctx, q, true);
   }
   const text = (m.text || '').trim();
   if (/^\/start(@\w+)?$/i.test(text) && USER_WIPE && !ctx.dry) await wipeChat(ctx, m, 'wipeFrom:' + ctx.chat);
   if (/^\/start(@\w+)?$/i.test(text)) return rishatStart(ctx);
   if (/^\/menu(@\w+)?$/i.test(text) || /^(отмена|стоп|меню)$/i.test(text) || /^\//.test(text)) return rishatMenu(ctx);
+  if (m.voice || m.audio || m.video_note) {
+    const f = m.voice || m.audio || m.video_note; const said = await transcribe(ctx, await tgFile(ctx, f.file_id)).catch(() => '');
+    if (!said) return send(ctx, '🎤 Не расслышал, повтори или напиши текстом 🙏');
+    await send(ctx, '🎤 ' + esc(said)); return onRishat(ctx, { ...m, voice: null, audio: null, video_note: null, text: said }, null, cfg);
+  }
   const st = await getSt(ctx);
   if (st.await === 'xqsum') { const a = parseAmount(text); if (!a) return send(ctx, 'Напиши сумму числом, например <code>500000</code>');
     await putSt(ctx, { await: 'xqwhat', xq: a.amount }); return send(ctx, `🙏 ${fmt(a.amount)} сум — <b>на что?</b> Коротко, например <code>реклама на декабрь</code>`, [[['↩️ Меню', 'xm']]]); }
@@ -881,11 +888,6 @@ async function onRishat(ctx, m, q, cfg) {
       reply_markup: kb([[['✅ Вложил', 'xy:' + rid, 'success'], ['❌ Нет', 'xn:' + rid, 'danger']]]) }).catch(() => {});
     await send(ctx, `🙏 Отправил Наилю: ${fmt(st.xq)} сум — ${esc(text.slice(0, 100))}. Ответ придёт сюда ✨`);
     return rishatStart(ctx);
-  }
-  if (m.voice || m.audio || m.video_note) {
-    const f = m.voice || m.audio || m.video_note; const said = await transcribe(ctx, await tgFile(ctx, f.file_id)).catch(() => '');
-    if (!said) return send(ctx, '🎤 Не расслышал, повтори или напиши текстом 🙏');
-    await send(ctx, '🎤 ' + esc(said)); return onRishat(ctx, { ...m, voice: null, audio: null, video_note: null, text: said }, null, cfg);
   }
   const img = m.photo ? m.photo[m.photo.length - 1] : null;
   if (img) { await send(ctx, '📷 Читаю чек…'); const seen = await readReceipt(ctx, await tgFile(ctx, img.file_id));
@@ -1269,7 +1271,9 @@ async function rentEvent(ctx, d, id) {                 // запись по ар
   const money = d.cur === '$' ? '$' + fmt(d.amount) : fmt(d.amount) + ' сум', ord = d.ord && d.ord !== 'new' ? ' · заказ ' + d.ord : '';
   const ps = d.ps ? ' ' + d.ps : '';
   const per = d.until ? ` · ${dm(d.since || d.date)}–${dm(d.until)}` : '';
-  const t = d.type === 'Доход' ? `💵 <b>${/Продлен/.test(d.cat || '') ? 'Продление' : 'Оплата аренды'}${ps}: ${money}</b>${per}${ord}`
+  if (d.type === 'Доход' && d.cat === 'Предоплата') return;   // бронь уже объявлена при предоплате — второй раз не пишем (проверка 28.11)
+  const lab = /Удержано/.test(d.cat || '') ? '✋ Удержано из залога' : /Сгоревш/.test(d.cat || '') ? '🔥 Бронь сгорела, предоплата остаётся' : /из залога/.test(d.cat || '') ? '➕ Продление из залога' : /Продлен/.test(d.cat || '') ? '💵 Продление' : '💵 Оплата аренды';
+  const t = d.type === 'Доход' ? `<b>${lab}${ps}: ${money}</b>${per}${ord}`
     : d.type === 'Предоплата' ? `🆕 <b>Бронь${ps}: предоплата ${money}</b>${ord}${d.book ? ' · на ' + human(d.book) : ''}`
     : d.type === 'Залог' ? `🔐 <b>Залог взят: ${money}</b>${ord}`
     : d.type === 'Возврат залога' ? `↩️ <b>Залог возвращён: ${money}</b>${ord}`
@@ -1397,6 +1401,7 @@ async function onMessage(ctx, m) {
     return startScreen(ctx);
   }
   if (ctx.wife) return wifeText(ctx, cfg, st, m, text);   // жена: только ответы по своей записи
+  if (st.await === 'wgwhy' && st.wgr && text && /^\/|^(отмена|стоп)$/i.test(text)) { await putSt(ctx, {}); st = {}; }   // передумал — запрос остаётся в ящике
   if (st.await === 'wgwhy' && st.wgr && text) {           // причина отказа по цели жены
     const R = await wInbox(ctx), x = R[st.wgr]; await putSt(ctx, {});
     if (!x || x.done) return send(ctx, 'Этот запрос уже закрыт.');
@@ -1414,7 +1419,7 @@ async function onMessage(ctx, m) {
     const said = await transcribe(ctx, await tgFile(ctx, f.file_id));
     if (!said) return send(ctx, '🎤 Не расслышал. Попробуйте ещё раз или напишите текстом.');
     await send(ctx, '🎤 ' + esc(said));
-    if (st.await && (st.d || st.g || st.ns)) return onMessage(ctx, { ...m, voice: null, audio: null, video_note: null, text: said });
+    if (st.await && (st.d || st.g || st.ns || st.wgr)) return onMessage(ctx, { ...m, voice: null, audio: null, video_note: null, text: said });
     ctx.ptype = st.ptype; ctx.ord = st.ord; ctx.ps = st.ps; return startDraft(ctx, cfg, st.dir || null, said, 'голос');
   }
   const img = m.photo ? m.photo[m.photo.length - 1] : (m.document && /^image\//.test(m.document.mime_type || '') ? m.document : null);
@@ -1441,7 +1446,8 @@ async function onMessage(ctx, m) {
   { const h = parseHps(text); if (h) return setSupDebt(ctx, h); }   // пересланный ответ HPS на /report
   { const r = text.match(/^(?:долг\s*(?:поставщику)?\s*)?([\d\s.,]+)\s*(?:руб[а-я.]*|₽|rub)$/i);   // «4607 руб», «долг 4 607,72 ₽»
     if (r || (st.await === 'tool' && st.tool && st.tool.kind === 'hps' && num(text) > 0)) return setSupDebt(ctx, { rub: num(r ? r[1] : text), usdt: null }); }
-  if (st.await === 'tool' && st.tool) return onToolText(ctx, cfg, st, text);
+  if (st.await === 'tool' && st.tool && /[а-яёa-z]{3,}/i.test(text) && !parseAmount(text)) { st = {}; await putSt(ctx, {}); }   // написали запись словами — вопрос инструмента снимаем
+  else if (st.await === 'tool' && st.tool) return onToolText(ctx, cfg, st, text);
   if (st.g && st.await === 'fmsum') return fmSetPlan(ctx, text);
   if (st.g && ['gsum', 'gname', 'gamt', 'gdate'].includes(st.await)) return onGoalText(ctx, cfg, st, text);
   if (/закрыл[а-я]*\s+(оплат|поставщ)/i.test(text)) return closeSupplier(ctx, cfg);
@@ -1495,7 +1501,8 @@ async function draftText(ctx, cfg, st, m, text) {
 const complete = d => d.dir && d.type && d.amount != null && (d.type === 'Между своими' ? d.from && d.to
   : (!needsCat(d.type) || d.cat) && (isOut(d.type) ? d.from : d.to) && (d.type !== 'Предоплата' || (d.dir === 'Leadex' ? d.deal : d.book)) && (d.type !== 'Дал в долг' || (d.whom && d.due)));
 async function reshow(ctx, st) {
-  if (!complete(st.d)) return askNext(ctx, await config(ctx), st);
+  const d = st.d, needUntil = d && d.dir === 'Аренда PS5' && d.type === 'Доход' && d.ord && !d.edit && !d.until;   // срок аренды не пропускать (оплата в $)
+  if (!complete(st.d) || needUntil) return askNext(ctx, await config(ctx), st);
   st.await = null; await putSt(ctx, st);
   return send(ctx, summary(st.d), [[['✅ Записать', 'ok'], ['❌ Отменить', 'no'], ['✏️ Правка', 'ed']], [BACK]]); }
 
@@ -1679,7 +1686,7 @@ const WD = ['воскресенье', 'понедельник', 'вторник'
 async function monthReport(ctx, kind, only) {   // only — индекс направления (кнопка в разделе)
   const [j] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: 'A2:P3000' }]);
   const ym = todayYmd().slice(0, 7), T = kind === 'in' ? 'Доход' : 'Расход';
-  const recs = j.values.filter(r => r[0] && r[12] !== 'удалено' && r[4] === T && r[1] && r[1].d)
+  const recs = j.values.filter(r => r[0] && r[12] !== 'удалено' && r[4] === T && r[1] && r[1].d && !(ctx.wife && /сюрприз/i.test(String(r[14] || '') + String(r[6] || ''))))   // жене «Сюрприз» не показывать
     .map(r => ({ id: r[0], day: ymdT(new Date(r[1].d + TZ_MS)), dir: r[3], cat: r[6] || r[5] || '', uzs: Number(r[7]) || 0, usd: Number(r[8]) || 0, card: kind === 'in' ? r[11] : r[10] }))
     .filter(x => x.day.startsWith(ym) && !/^Доля из/.test(x.cat) && (only == null || x.dir === DIRS[only]));      // доли — внутренние начисления, не двойной счёт
   const [y, m] = ym.split('-').map(Number);
@@ -1796,7 +1803,7 @@ async function flatReminder(env, when) {
 async function supReminder(env) {
   const ctx = { env, out: [] }; const cfg = await config(ctx, true);
   ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
-  const st = await getSt(ctx); if (!st.d) await putSt(ctx, { tool: { kind: 'hps' }, await: 'tool' });   // ждём рубли, скрин или пересылку
+  const st = await getSt(ctx); if (!st.d && !st.await && !st.g && !st.ns && !st.tool) await putSt(ctx, { tool: { kind: 'hps' }, await: 'tool' });   // не ломаем начатый диалог (проверка 28.11)   // ждём рубли, скрин или пересылку
   await send(ctx, '🧾 <b>23:03 — проверим долг поставщику</b>\nНапишите <code>/report</code> в группе «PSSHOP x HPS», потом пришлите сюда:\n• сумму в рублях, например <code>4607</code>\n• или скрин ответа\n• или перешлите ответ.\nЯ умножу рубли на 202.', [[['Позже', 'st0']]]);
 }
 async function debtRows(ctx, cfg) {                         // кнопки долгов — на СТАРТ и в главном меню
@@ -2177,9 +2184,11 @@ async function limitCheck(ctx, d) {
     const pct = Math.round(spent / lim * 100), lvl = pct >= 100 ? 100 : pct >= 70 ? 70 : 0, key = fs + '|' + r[0] + '|' + r[1];
     if (!lvl || (warn[key] || 0) >= lvl) continue;
     warn[key] = lvl; changed = true;
-    await send(ctx, lvl === 100
+    const lt = lvl === 100
       ? `🔴 <b>Лимит «${esc(r[1])}» исчерпан</b>\nПотрачено ${fmt(spent)} из ${fmt(lim)} (${pct}%) — до 26-го.`
-      : `⚠️ <b>«${esc(r[1])}»: ${pct}% лимита</b>\nПотрачено ${fmt(spent)} из ${fmt(lim)}, осталось ${fmt(lim - spent)} до 26-го.`);
+      : `⚠️ <b>«${esc(r[1])}»: ${pct}% лимита</b>\nПотрачено ${fmt(spent)} из ${fmt(lim)}, осталось ${fmt(lim - spent)} до 26-го.`;
+    if (ctx.wife || ctx.rishat) { const cfg = await config(ctx); for (const o of cfg.owners) await tg(ctx, 'sendMessage', { chat_id: o, parse_mode: 'HTML', text: premium(lt + (ctx.wife ? '\n<i>(трата жены)</i>' : '\n<i>(расход Ришата)</i>')) }).catch(() => {}); }   // предупреждения — владельцу
+    else await send(ctx, lt);
   }
   if (changed && !ctx.dry) await store(ctx, { op: 'put', k: 'limWarn', v: warn });
 }
