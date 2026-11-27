@@ -5,7 +5,9 @@ const DIRS = ['PS SHOP', 'Аренда PS5', 'Leadex', 'Личное'];
 const TYPES = ['Доход', 'Расход', 'Между своими', 'Предоплата', 'Залог', 'Вложение', 'Дал в долг', 'Возврат долга'];
 const IN_T = ['Доход', 'Предоплата', 'Залог', 'Возврат долга'], OUT_T = ['Расход', 'Вложение', 'Возврат залога', 'Дал в долг'];   // «Дал в долг» — не расход (владелец 27.11)
 const isIn = t => IN_T.includes(t), isOut = t => OUT_T.includes(t), needsCat = t => t === 'Доход' || t === 'Расход';
-const typeRows = () => chunk(TYPES.map((t, i) => [TLABEL(t), 'ty:' + i]), 3);
+// типы на кнопках — только нужные направлению (владелец 27.11: перевод — отдельной кнопкой в меню)
+const TYPES_BY_DIR = { 'Аренда PS5': ['Доход', 'Расход', 'Предоплата', 'Залог'], 'PS SHOP': ['Доход', 'Расход'], 'Leadex': ['Доход', 'Расход'], 'Личное': ['Доход', 'Расход'] };   // долг, вложения, перевод — свои кнопки
+const typeRows = dir => chunk(TYPES.map((t, i) => [TLABEL(t), 'ty:' + i, t === 'Доход' ? 'success' : t === 'Расход' ? 'danger' : undefined]).filter(b => (TYPES_BY_DIR[dir] || ['Доход', 'Расход', 'Предоплата', 'Залог']).includes(TYPES[+b[1].slice(3)])), 2);
 const TLABEL = t => (t === 'Между своими' ? 'Между' : t);   // короткая подпись на кнопке
 const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const DAY = 86400000, TZ_MS = 5 * 3600000;
@@ -350,7 +352,7 @@ async function askNext(ctx, cfg, st) {
   if (!d.dir) { st.await = null; await putSt(ctx, st);
     return void await send(ctx, `К какому направлению относится: «${esc(d.comment)}»?`, withBack([[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']]])); }
   if (!d.type) { st.await = null; await putSt(ctx, st);
-    return void await send(ctx, 'Это доход, расход или перевод между своими картами?', withBack(typeRows())); }
+    return void await send(ctx, 'Это доход или расход?', withBack(typeRows(d.dir))); }
   if (d.amount == null) { st.await = 'amount'; await putSt(ctx, st);
     return void await send(ctx, '💰 Какая сумма? Напишите число, например <code>150000</code> или <code>$50</code>.', withBack()); }
   if (d.dir === 'PS SHOP' && d.type === 'Доход' && !d.cat) {   // категорию дохода PS SHOP не спрашиваем (владелец 26.11); фильтры — позже
@@ -1890,7 +1892,7 @@ async function onCallback(ctx, q, again) {
     if (v === 'c') return askGroup(ctx, cfg, st);
     if (v === 'n') { st.editDir = true; await putSt(ctx, st); return send(ctx, 'Новое направление:', withBack([[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']]])); }
     if (v === 'd') { st.await = 'date'; await putSt(ctx, st); return send(ctx, '📅 Дата? Нажмите кнопку или напишите, например, <code>24.11</code>.', withBack([[['Сегодня', 'dt:0'], ['Вчера', 'dt:1'], ['Позавчера', 'dt:2']]])); }
-    if (v === 't') return send(ctx, 'Тип записи:', withBack(typeRows()));
+    if (v === 't') return send(ctx, 'Тип записи:', withBack(typeRows(d.dir)));
     if (v === 'k') { const side = isIn(d.type) ? 'to' : 'from';
       if (d.type === 'Между своими') { d.from = d.to = null; return askNext(ctx, cfg, st); }
       return askCard(ctx, cfg, st, side, '💳 Какая карта?'); }
