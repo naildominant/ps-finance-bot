@@ -520,11 +520,15 @@ async function onTool(ctx, q) {
       ...all.filter(r => !ORDER.some(([w]) => String(r[0]).startsWith(w))).map(r => ({ r, t: r[0] }))];
     let tot = 0, alien = 0, n = 0; const L = ['<b>💳 Баланс по картам</b>', ''];
     const fond = ((await getGoals(ctx)).cush || {}).total || 0;   // доллары: 🔒 ФОНД (подушка) + отложено (владелец 27.11)
+    let broDue = 0; try { broDue = Math.max(0, (await rentOwe(ctx, cfg)).due); } catch (e) {}   // АРЕНДНАЯ: залог / брата / ваше (/claude №6)
     for (const { r, t, h } of rows) {
       if (h) L.push(h === '—' ? '┈┈┈┈┈┈┈┈┈┈' : h, '');
       const v = Number(r[8]) || 0, j = Number(r[9]) || 0, usd = r[2] === '$';
-      L.push(`${++n}. <b>${esc(t)}</b>\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}` + (t === 'ДОЛЛАРЫ' ? `\n      🔒 ФОНД: <b>$${fmt(Math.min(fond, v))}</b>\n      💼 Отложено: <b>$${fmt(Math.max(0, v - fond))}</b>` : '') , '');
-      if (!usd) { tot += v; alien += j; }
+      const rent = t === 'АРЕНДНАЯ', bro = rent ? Math.min(broDue, Math.max(0, v - j)) : 0, mine = rent ? Math.max(0, v - j - bro) : 0;
+      L.push(`${++n}. <b>${esc(t)}</b>\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j && !rent ? ` (из них чужие ${fmt(j)})` : ''}`
+        + (rent && v ? (j ? `\n      🔐 Залог: <b>${fmt(j)}</b>` : '') + (bro ? `\n      💪 Брата: <b>${fmt(bro)}</b>` : '') + (mine ? `\n      🧡 Ваше: <b>${fmt(mine)}</b> — можно перевести себе` : '') : '')
+        + (t === 'ДОЛЛАРЫ' ? `\n      🔒 ФОНД: <b>$${fmt(Math.min(fond, v))}</b>\n      💼 Отложено: <b>$${fmt(Math.max(0, v - fond))}</b>` : '') , '');
+      if (!usd) { tot += v; alien += j + bro; }   // доля брата — тоже не ваша
     }
     L.push('━━━━━━━━━━', `Всего в сумах: <b>${fmt(tot)}</b>`); if (alien) L.push(`Из них мои: <b>${fmt(tot - alien)}</b>`);
     return send(ctx, L.join('\n'), [[BACK]]);
