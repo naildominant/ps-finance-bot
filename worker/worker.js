@@ -859,22 +859,16 @@ async function supplierDone(ctx, cfg, card, left) {
 // ---------- Аренда: доля брата 60% после каждой сделки ----------
 // ---------- Аренда: вложения брата (задача 18, владелец 27.11) ----------
 // Брат вложил сумму в $ (DO rentInv.usd, ставится /rentinv — сумма не в коде). Пока не вернулась: брату 60%, Наилю 40%;
-// вернулось = остаток карты Арс (по курсу ЦБ). После полного возврата доли меняются: Наилю 60%, брату 40% — с прибыли после этого момента.
+// вернулось = остаток карты Арс (по курсу ЦБ). Доли НЕ меняются автоматически (владелец 27.11: «сначала закроем долг, там решим») — всегда брату 60%, Наилю 40%.
 async function rentInvState(ctx, cfg, profit) {
   const inv = (await store(ctx, { op: 'get', k: 'rentInv' })) || null;
   const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
   const r = g.values.find(r => /^Арс/.test(String(r[0] || ''))), ars = r ? Number(r[8]) || 0 : 0, rate = await cbuRate(ctx, todayYmd());
   const back = Math.round(ars / rate), left = inv ? Math.max(0, inv.usd - back) : 0;
-  if (inv && !inv.switched && left <= 0 && profit != null) {   // вложение вернулось — меняем доли с этого момента
-    inv.switched = true; inv.p0 = profit; inv.at = Date.now(); if (!ctx.dry) await store(ctx, { op: 'put', k: 'rentInv', v: inv });
-    await send(ctx, `🎉 <b>Вложения брата вернулись полностью!</b>\nС этого момента доли аренды: вам 60%, брату 40%.`);
-  }
   return { inv, ars, back, left, rate };
 }
 function rentSplit(inv, profit) {                       // сколько всего положено брату и Наилю с начала учёта
-  if (!inv || !inv.switched) return { bro: profit * 0.6, mine: profit * 0.4, pb: 60, pm: 40 };
-  const p0 = inv.p0 || 0, after = profit - p0;
-  return { bro: p0 * 0.6 + after * 0.4, mine: p0 * 0.4 + after * 0.6, pb: 40, pm: 60 };
+  return { bro: profit * 0.6, mine: profit * 0.4, pb: 60, pm: 40 };   // смены долей нет (владелец 27.11)
 }
 async function rentInvScreen(ctx, cfg) {
   const s = await rentInvState(ctx, cfg, null);
@@ -882,8 +876,7 @@ async function rentInvScreen(ctx, cfg) {
   const L = ['💼 <b>Вложения брата в аренду</b>', '',
     `💰 Вложено: <b>$${fmt(s.inv.usd)}</b>`, `✅ Вернулось: <b>$${fmt(Math.min(s.back, s.inv.usd))}</b> (${fmt(s.ars)} сум на Арс)`,
     s.left > 0 ? `⏳ Осталось: <b>$${fmt(s.left)}</b> (${Math.round((s.inv.usd - s.left) / s.inv.usd * 100)}%)` : '🎉 Вернулось полностью', '',
-    ctx.viewer ? (s.inv.switched ? 'Доли сейчас: Наилю 60%, <b>вам 40%</b>.' : 'Доли сейчас: <b>вам 60%</b>, Наилю 40%.\nПосле возврата вложений: Наилю 60%, вам 40%.')
-      : s.inv.switched ? 'Доли сейчас: <b>вам 60%</b>, брату 40%.' : 'Доли сейчас: брату 60%, вам 40%.\nПосле возврата: <b>вам 60%</b>, брату 40%.'];
+    ctx.viewer ? 'Доли: <b>вам 60%</b>, Наилю 40%.' : 'Доли: брату 60%, вам 40%.'];
   { const J = await journal(ctx), ars = cardByWord(cfg, 'Арс');
     const inc = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Доход').reduce((a, x) => a + x.uzs, 0), exp = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Расход').reduce((a, x) => a + x.uzs, 0);
     const paid = ars ? J.filter(x => x.type === 'Между своими' && x.to === ars.name).reduce((a, x) => a + x.uzs, 0) : 0, owe = Math.round(rentSplit(s.inv, inc - exp).bro);

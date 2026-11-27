@@ -136,3 +136,4 @@ Everything writes normally. On «тест окончен»: clear Журнал r
 - /claude №8 (27.11): СТАРТ button «🧾 Поставщику: X»; dsup screen: «Поставщику: X», «💳 На карте ПОСТАВЩИК: Y», «👉 Докинуть с основной карты: (X−Y) вверх до 10 000» or «✅ хватает».
 - Supplier screen v2 (owner 27.11 voice): supScreen = debt/card/top + [💸 Перевёл на карту поставщика] (sut → amount button = top or typed → transfer Приёмка→Поставщик, 🗑) [✍️ Добавить рубли] [✅ Поставщик списал (оплатил)] [↩️ Назад]. «Оплатил» NO LONGER wipes debt on press — only in supplierDone after remainder entered and paid>0; its Back → dsup. 23:04 accidental press wiped 2 640 000 → restored via /supset.
 - СТАРТ supplier button: if card ПОСТАВЩИК covers debt (top=0) → «🧾 Поставщику: ✅» (owner 27.11).
+- Rent shares (owner 27.11): auto switch 60/40→40/60 after investment return REMOVED (rentSplit always bro 60 / mine 40; no 🎉 message). Investment return still tracked/shown.
