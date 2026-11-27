@@ -771,6 +771,10 @@ async function rentInvScreen(ctx, cfg) {
     `💰 Вложено: <b>$${fmt(s.inv.usd)}</b>`, `✅ Вернулось: <b>$${fmt(Math.min(s.back, s.inv.usd))}</b> (${fmt(s.ars)} сум на Арс)`,
     s.left > 0 ? `⏳ Осталось: <b>$${fmt(s.left)}</b> (${Math.round((s.inv.usd - s.left) / s.inv.usd * 100)}%)` : '🎉 Вернулось полностью', '',
     s.inv.switched ? 'Доли сейчас: <b>вам 60%</b>, брату 40%.' : 'Доли сейчас: брату 60%, вам 40%.\nПосле возврата: <b>вам 60%</b>, брату 40%.'];
+  { const J = await journal(ctx), ars = cardByWord(cfg, 'Арс');
+    const inc = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Доход').reduce((a, x) => a + x.uzs, 0), exp = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Расход').reduce((a, x) => a + x.uzs, 0);
+    const paid = ars ? J.filter(x => x.type === 'Между своими' && x.to === ars.name).reduce((a, x) => a + x.uzs, 0) : 0, owe = Math.round(rentSplit(s.inv, inc - exp).bro);
+    L.push('', '👤 <b>Брату по аренде</b> (с 26.11)', `Прибыль: ${fmt(inc - exp)}`, `Положено брату: ${fmt(owe)}`, `Отдано: ${fmt(paid)}`, owe - paid > 0 ? `❗ Должен брату: <b>${fmt(owe - paid)}</b>` : '✅ Брату ничего не должен'); }
   return send(ctx, L.join('\n'), [[['↩️ Назад', 'd:1']]]);
 }
 async function rentShare(ctx, cfg) {
@@ -2030,7 +2034,9 @@ export default {
     if (u.pathname === '/rec' && req.method === 'POST') {     // служебное: записать готовые записи по просьбе владельца из чата (как кнопкой «Записать»)
       const ctx = { env, out: [] }, cfg = await config(ctx), ids = [];
       for (const d of await req.json()) {
-        d.date = d.date || todayYmd(); d.src = d.src || 'чат'; const id = await save(ctx, cfg, d); ids.push(id);
+        d.date = d.date || todayYmd(); d.src = d.src || 'чат';
+        if (d.ord === 'new') { const m = await getOrds(ctx); const oid = 'A' + (++m._n); m[oid] = { id: oid, ps: d.ps || '', book: '', prepay: [], zalog: [], paid: true, closed: true, at: Date.now() }; await putOrds(ctx, m); d.ord = oid; }
+        const id = await save(ctx, cfg, d); ids.push(id);
         if (d.type === 'Возврат долга' && d.loan) {
           const L = (await store(ctx, { op: 'get', k: 'loans' })) || {}, x = L[d.loan];
           if (x) { x.done = true; await store(ctx, { op: 'put', k: 'loans', v: L });
