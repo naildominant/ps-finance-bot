@@ -231,7 +231,7 @@ async function aiParse(ctx, cfg, dir, text) {
 Дата: "вчера", "позавчера", "25 ноября" → YYYY-MM-DD, не сказано → null.
 Категории по направлениям:
 ${dirs}
-Карты (пиши точно как здесь): ${cfg.cards.map(c => c.name).join('; ')}. "нал", "наличка", "кэш" = Нал. "доллары наличные" = Доллары.`;
+Карты (пиши точно как здесь): ${cfg.cards.map(c => c.name).join('; ')}. "нал", "наличка", "кэш" = Нал. "доллары наличные" = Доллары. "узум", "эпл пей", "apple pay" = Apple Pay (а "вклад" = UZUM вклад, "булка" = Булка).`;
   const r = await ctx.env.AI.run(MODEL, { messages: [{ role: 'system', content: sys }, { role: 'user', content: text }], max_tokens: 900, temperature: 0 });
   const raw = typeof r.response === 'string' ? r.response : JSON.stringify(r.response);
   const m = raw.match(/\{[\s\S]*\}/);
@@ -297,12 +297,16 @@ function cardInText(cfg, text) {
   const t = ' ' + text.toLowerCase().replace(/ё/g, 'е') + ' ';
   if (/\s(доллар|бакс|\$)/.test(t) && /налич|нал\b|кэш/.test(t)) return cfg.cards.find(c => c.name === 'Доллары') || null;
   if (/налич|\sнал(ом)?[\s.,!]|кэш/.test(t)) return cfg.cards.find(c => c.name === 'Нал') || null;
+  if (/вклад/.test(t)) { const v = cfg.cards.find(c => /вклад/i.test(c.name)); if (v) return v; }
+  if (/булк/.test(t)) { const v = cfg.cards.find(c => /^Булка/.test(c.name)); if (v) return v; }
+  if (/(apple|эпл|эппл|эйпл)|\sузум/.test(t)) return cfg.cards.find(c => c.name === 'Apple Pay') || null;   // карта «Узум 9028» = Apple Pay (владелец 27.11)
   return cfg.cards.find(c => { const short = c.name.toLowerCase().split(' (')[0].replace(/ё/g, 'е'), dig = (c.name.match(/\d{4}/) || [])[0];
     return (short.length >= 3 && t.includes(short.slice(0, Math.max(3, short.length - 1)))) || (dig && t.includes(dig)); }) || null;
 }
 function matchCard(cfg, s) {
   if (!s) return null;
   s = String(s).toLowerCase();
+  if (/apple|эпл|эппл|эйпл|^узум$|узум \(|9028/.test(s) && !/вклад|булк/.test(s)) { const ap = cfg.cards.find(c => c.name === 'Apple Pay'); if (ap) return ap; }   // «узум» = Apple Pay
   return cfg.cards.find(c => c.name.toLowerCase() === s)
       || cfg.cards.find(c => c.name.toLowerCase().includes(s) || s.includes(c.name.toLowerCase().split(' (')[0]))
       || cfg.cards.find(c => (c.name.match(/\d{4}/) || [])[0] && s.includes(c.name.match(/\d{4}/)[0])) || null;
@@ -504,7 +508,7 @@ async function onTool(ctx, q) {
     await putSt(ctx, {});                                   // «Баланс» только показывает остатки (владелец 26.11); исправление — не здесь
     const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
     // порядок и подписи (владелец 26.11); карту брата не показываем — её смотрит брат
-    const ORDER = [['Приёмка', 'ГЛАВНАЯ', '⭐ <b>Основные</b>'], ['Узум', 'APPLE PAY'], ['Поставщик', 'ПОСТАВЩИК', '—'], ['Капитал', 'АРЕНДНАЯ'], ['Нал', 'НАЛ', '—'],
+    const ORDER = [['Приёмка', 'ГЛАВНАЯ', '⭐ <b>Основные</b>'], ['Apple Pay', 'APPLE PAY'], ['Поставщик', 'ПОСТАВЩИК', '—'], ['Капитал', 'АРЕНДНАЯ'], ['Нал', 'НАЛ', '—'],
       ['Булка', 'BULKA CARD'], ['Расходка', 'PSРАСХОДЫ'], ['Ипак', 'ИПАК'], ['Доллары', 'ДОЛЛАРЫ', '—'], ['UZUM вклад', 'ВКЛАД']];
     const all = g.values.filter(r => r[0] && r[2] && !/^Арс/.test(r[0]));
     const rows = [...ORDER.map(([w, t, h]) => { const r = all.find(r => String(r[0]).startsWith(w)); return r && { r, t, h }; }).filter(Boolean),
@@ -944,6 +948,12 @@ function draftFrom(cfg, dir, p, text, single) {
   if (d.type && d.dir && needsCat(d.type)) detectCat(cfg, d, piece, p.category);
   const ok = c => c && (isIn(d.type) ? c.inc.includes(d.dir) : isOut(d.type) ? c.exp.includes(d.dir) : true) ? c.name : null;
   let cf = matchCard(cfg, p.card_from), ct = matchCard(cfg, p.card_to);
+  const lowp = piece.toLowerCase();                       // ИИ путает «узум» с «UZUM вклад»: вклад — только если сказано «вклад»
+  if (cf && /вклад/i.test(cf.name) && !/вклад/.test(lowp)) cf = null;
+  if (ct && /вклад/i.test(ct.name) && !/вклад/.test(lowp)) ct = null;
+  if (d.type === 'Между своими' && !d.dir) d.dir = 'Личное';   // перевод между своими — направление не важно
+  { const m = lowp.match(/(?:^|\s)с\s+(.+?)\s+на\s+(.+)$/);   // «с X на Y» — карты по местам
+    if (m && (d.type === 'Между своими' || !d.type)) { const a = cardInText(cfg, m[1]), b = cardInText(cfg, m[2]); if (a && b && a !== b) { d.type = 'Между своими'; d.dir = d.dir || 'Личное'; cf = a; ct = b; } } }
   if (!cf && !ct && d.type !== 'Между своими') cf = ct = cardInText(cfg, piece);
   if (d.type === 'Между своими') { if (cf) d.from = cf.name; if (ct) d.to = ct.name; }
   if (isIn(d.type)) d.to = ok(ct) || ok(cf);
@@ -1773,7 +1783,7 @@ async function onCallback(ctx, q, again) {
     if (dir === 'Аренда PS5') return rentStart(ctx);
     if (dir === 'Leadex') return leadexScreen(ctx);
     if (dir === 'Личное') return send(ctx, '<b>ЛИЧНОЕ</b>', [[['−', 'pt:-']], [['+', 'pt:+']], [['🤝 Дал в долг', 'ln:new', 'primary']], [['📉 Расходы', 'mr:out|3']], ...extra]);   // владелец 27.11
-    return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
+    return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Apple Pay» или «пришло 450к за игру на Приёмку».`, extra);
   }
   if (k === 'bk' && st.tool) { ctx.editMid = mid; await putSt(ctx, {}); return dirMenu(ctx); }
   if (k === 'bk') {
