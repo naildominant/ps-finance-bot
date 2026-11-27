@@ -197,6 +197,7 @@ async function readHps(ctx, bytes) {
   const rub = num(j.rub), usdt = num(j.usdt);
   return rub > 0 ? { rub, usdt: usdt > 0 ? usdt : null } : null;
 }
+const supRound = n => Math.ceil(n / 10000) * 10000;   // долг поставщику — всегда вверх до 10 000 (владелец 27.11: «закидываю ровную сумму»)
 // рубли за одну заявку PS SHOP → прибавить к долгу поставщику
 async function addSupRub(ctx, rub) {
   const x = (await store(ctx, { op: 'get', k: 'supDebt' })) || { rub: 0, uzs: 0 };
@@ -205,7 +206,7 @@ async function addSupRub(ctx, rub) {
   if (!ctx.dry) { await store(ctx, { op: 'put', k: 'supDebt', v }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); }
   await putSt(ctx, {});
   ctx.noTrack = true;
-  await send(ctx, `🧾 Поставщику: +${fmt(add)} сум (${String(rub).replace('.', ',')} RUB × ${RUB_TO_UZS})\n<b>Долг поставщику всего: ${fmt(v.uzs)} сум</b>`);
+  await send(ctx, `🧾 Поставщику: +${fmt(add)} сум (${String(rub).replace('.', ',')} RUB × ${RUB_TO_UZS})\n<b>Долг поставщику всего: ${fmt(supRound(v.uzs))} сум</b>`);
   await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx);
 }
 // сохранить долг поставщику и показать СТАРТ
@@ -214,7 +215,7 @@ async function setSupDebt(ctx, h) {
   if (!ctx.dry) { await store(ctx, { op: 'put', k: 'supDebt', v: { ...h, uzs, at: Date.now() } }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); }
   await putSt(ctx, {});
   ctx.noTrack = true;
-  await send(ctx, `🧾 <b>Долг поставщику: ${fmt(uzs)} сум</b>\n${h.usdt ? String(h.usdt).replace('.', ',') + ' USDT ≈ ' : ''}${String(h.rub).replace('.', ',')} RUB × ${RUB_TO_UZS}` +
+  await send(ctx, `🧾 <b>Долг поставщику: ${fmt(supRound(uzs))} сум</b>\n${h.usdt ? String(h.usdt).replace('.', ',') + ' USDT ≈ ' : ''}${String(h.rub).replace('.', ',')} RUB × ${RUB_TO_UZS}` +
     '\nОбщий долг обновлён, кнопка висит на СТАРТ.');
   ctx.noTrack = false; return startScreen(ctx);
 }
@@ -1261,7 +1262,7 @@ function parseHps(text) {
 }
 async function supDue(ctx) {
   const x = await store(ctx, { op: 'get', k: 'supDebt' });
-  return x && x.uzs > 0 ? x.uzs : 0;                     // лимит $120 убран (владелец 26.11) — долг виден всегда
+  return x && x.uzs > 0 ? supRound(x.uzs) : 0;                     // лимит $120 убран (владелец 26.11) — долг виден всегда
 }
 // квартира $400, 26-го (владелец 26.11): напоминание 25-го вечером (23:03) и 26-го в 12:31
 const FLAT_USD = 400, FLAT_DAY = 26;
