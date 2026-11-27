@@ -310,7 +310,8 @@ function cardInText(cfg, text) {
   const t = ' ' + text.toLowerCase().replace(/ё/g, 'е') + ' ';
   if (/\s(доллар|бакс|\$)/.test(t) && /налич|нал\b|кэш/.test(t)) return cfg.cards.find(c => c.name === 'Доллары') || null;
   if (/налич|\sнал(ом)?[\s.,!]|кэш/.test(t)) return cfg.cards.find(c => c.name === 'Нал') || null;
-  if (/вклад/.test(t)) { const v = cfg.cards.find(c => /вклад/i.test(c.name)); if (v) return v; }
+  if (/вклад\w*\s+жен/.test(t)) { const v = cfg.cards.find(c => /^Вклад жены/i.test(c.name)); if (v) return v; }   // вклад жены (задача 26)
+  if (/вклад/.test(t)) { const v = cfg.cards.find(c => /вклад/i.test(c.name) && !/^Вклад жены/i.test(c.name)); if (v) return v; }
   { const A = [[/главн/, 'Приёмка'], [/арендн/, 'Капитал'], [/ps\s*расход|пс\s*расход/, 'Расходка'], [/\sарс(у|а|е)?[\s.,!]/, 'Арс']];   // названия как в «Балансе» (владелец 27.11)
     for (const [re, w] of A) if (re.test(t)) { const v = cfg.cards.find(c => c.name.startsWith(w)); if (v) return v; } }
   if (/булк/.test(t)) { const v = cfg.cards.find(c => /^Булка/.test(c.name)); if (v) return v; }
@@ -436,7 +437,7 @@ const cardPos = c => TR_NAMES.findIndex(([k]) => String(c.name).startsWith(k));
 const cardLabel = c => (TR_NAMES[cardPos(c)] || [])[1] || c.name;
 const cardSort = L => L.slice().sort((a, b) => ((cardPos(a.c) + 1) || 99) - ((cardPos(b.c) + 1) || 99));
 const TR_NAMES = [['Приёмка', '⭐ ГЛАВНАЯ'], ['Apple Pay', '🍏 APPLE PAY'], ['Поставщик', '📦 ПОСТАВЩИК'], ['Капитал', '🎮 АРЕНДНАЯ'], ['Нал', '💵 НАЛ'],
-  ['Расходка', '🧾 PSРАСХОДЫ'], ['Ипак', '💳 ИПАК'], ['Доллары', '💲 ДОЛЛАРЫ'], ['UZUM вклад', '🏦 ВКЛАД'], ['Булка', '🥖 BULKA CARD'], ['Арс', '💪 АРС (карта брата)']];
+  ['Расходка', '🧾 PSРАСХОДЫ'], ['Ипак', '💳 ИПАК'], ['Доллары', '💲 ДОЛЛАРЫ'], ['UZUM вклад', '🏦 ВКЛАД'], ['Булка', '🥖 BULKA CARD'], ['Вклад жены', '💎 ВКЛАД ЖЕНЫ'], ['Арс', '💪 АРС (карта брата)']];
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
 // эмодзи владельца после записи (владелец 26.11): расход — 💸; доход — 🤑
 const DONE_EMO = { 'Расход': '5319172285762919855', 'Дал в долг': '5319172285762919855', 'Вложение': '5319172285762919855', 'Доход': '5391292736647209211' };
@@ -722,7 +723,7 @@ async function onTool(ctx, q) {
     const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
     // порядок и подписи (владелец 26.11); карту брата не показываем — её смотрит брат
     const ORDER = [['Приёмка', 'ГЛАВНАЯ', '⭐ <b>Основные</b>'], ['Apple Pay', 'APPLE PAY'], ['Поставщик', 'ПОСТАВЩИК', '—'], ['Капитал', 'АРЕНДНАЯ'], ['Нал', 'НАЛ', '—'],
-      ['Расходка', 'PSРАСХОДЫ'], ['Ипак', 'ИПАК'], ['Доллары', 'ДОЛЛАРЫ', '—'], ['UZUM вклад', 'ВКЛАД'], ['Булка', 'BULKA CARD']];   // Булка — накопительная, в конце (владелец 27.11, /claude №5)
+      ['Расходка', 'PSРАСХОДЫ'], ['Ипак', 'ИПАК'], ['Доллары', 'ДОЛЛАРЫ', '—'], ['UZUM вклад', 'ВКЛАД'], ['Булка', 'BULKA CARD'], ['Вклад жены', 'ВКЛАД ЖЕНЫ']];   // Булка — накопительная, в конце (владелец 27.11, /claude №5)
     const all = g.values.filter(r => r[0] && r[2] && !/^Арс/.test(r[0]));
     const rows = [...ORDER.map(([w, t, h]) => { const r = all.find(r => String(r[0]).startsWith(w)); return r && { r, t, h }; }).filter(Boolean),
       ...all.filter(r => !ORDER.some(([w]) => String(r[0]).startsWith(w))).map(r => ({ r, t: r[0] }))];
