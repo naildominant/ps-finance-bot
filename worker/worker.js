@@ -411,7 +411,7 @@ async function doneMark(ctx, type) {
 }
 const TEST_WIPE = true;                                   // /start стирает чат — только на время теста (выключить на запуске)
 // накопление (владелец 26.11): ВКЛАД = копилка на 14 000 000 сум к 06.01.2027 (вклад больше не резерв PS SHOP)
-const GOAL_SUM = 14000000, GOAL_DATE = '06.01.2027';
+const GOAL_SUM = 14000000, GOAL_DATE = '05.01.2027';
 const PS_RESERVE = 0;                                      // резерв PS SHOP: пока 0% — вся прибыль владельцу (26.11; было 20%)
 // служебные категории — не на кнопках (бот ставит их сам): оплата поставщику, доход по умолчанию, проценты
 const HIDDEN_GROUPS = ['Поставщик', 'Продажа', 'Проценты по вкладу', 'Доля из PS SHOP (80%)', 'Доля из аренды (40%)', 'Доля из Leadex (50%)'];
@@ -820,7 +820,7 @@ async function onMessage(ctx, m) {
     const said = await transcribe(ctx, await tgFile(ctx, f.file_id));
     if (!said) return send(ctx, '🎤 Не расслышал. Попробуйте ещё раз или напишите текстом.');
     await send(ctx, '🎤 ' + esc(said));
-    if (st.await && st.d) return onMessage(ctx, { ...m, voice: null, audio: null, video_note: null, text: said });
+    if (st.await && (st.d || st.g)) return onMessage(ctx, { ...m, voice: null, audio: null, video_note: null, text: said });
     ctx.ptype = st.ptype; ctx.ord = st.ord; ctx.ps = st.ps; return startDraft(ctx, cfg, st.dir || null, said, 'голос');
   }
   const img = m.photo ? m.photo[m.photo.length - 1] : (m.document && /^image\//.test(m.document.mime_type || '') ? m.document : null);
@@ -847,6 +847,7 @@ async function onMessage(ctx, m) {
   { const r = text.match(/^(?:долг\s*(?:поставщику)?\s*)?([\d\s.,]+)\s*(?:руб[а-я.]*|₽|rub)$/i);   // «4607 руб», «долг 4 607,72 ₽»
     if (r || (st.await === 'tool' && st.tool && st.tool.kind === 'hps' && num(text) > 0)) return setSupDebt(ctx, { rub: num(r ? r[1] : text), usdt: null }); }
   if (st.await === 'tool' && st.tool) return onToolText(ctx, cfg, st, text);
+  if (st.g && ['gsum', 'gname', 'gamt', 'gdate'].includes(st.await)) return onGoalText(ctx, cfg, st, text);
   if (/закрыл[а-я]*\s+(оплат|поставщ)/i.test(text)) return closeSupplier(ctx, cfg);
   if (st.await === 'amount' && st.d) {
     const many = parseAmounts(text);
@@ -1200,6 +1201,137 @@ async function releaseDeal(ctx, cfg, d) {
   o.closed = true; await putDeals(ctx, m);
   return sum;
 }
+// ---------- Цели (задача 13, владелец 27.11) ----------
+// кнопка-цель: серая — не начата, синяя — копим, зелёная ✅ зачёркнутая — накоплено и потрачено (записан расход)
+// пополнение: цель → «Отложил» → сумма → куда положил; накоплено → «Готово» → расход Личное с карты, где копил
+const CUSH_USD = 200, CUSH_DAY = 20;                       // подушка: +$200 в месяц, напоминание 20-го в 23:03 (лимит 5 таймеров на аккаунт — 23:50 отдельно нельзя)
+const GOALS_SEED = [];                                   // стартовые цели владельца уже в памяти бота (DO goals); суммы в репозитории не храним
+async function getGoals(ctx) {
+  let g = await store(ctx, { op: 'get', k: 'goals' });
+  if (!g) { g = { _n: 0, list: {}, cush: { total: 0, m: {} } };
+    for (const [name, sum, cur, due, group, cat] of GOALS_SEED) { const id = 'G' + (++g._n); g.list[id] = { id, name, sum, cur, due, group: group || null, cat: cat || null, saved: 0, card: null, done: false }; }
+    await store(ctx, { op: 'put', k: 'goals', v: g }); }
+  return g;
+}
+const putGoals = (ctx, g) => store(ctx, { op: 'put', k: 'goals', v: g });
+const gMoney = (n, cur) => cur === '$' ? '$' + fmt(n) : fmt(n) + ' сум';
+function gShort(n, cur) {
+  if (cur === '$') return '$' + fmt(n);
+  if (n >= 1e6) return String(Math.round(n / 1e5) / 10).replace('.', ',') + ' млн';
+  if (n >= 1e3) return Math.round(n / 1e3) + ' тыс';
+  return fmt(n);
+}
+const strike = s => [...s].map(c => c + '̶').join('');
+const ymNow = () => todayYmd().slice(0, 7);
+async function goalsScreen(ctx) {
+  const g = await getGoals(ctx), c = g.cush, mon = c.m[ymNow()] || 0;
+  const all = Object.values(g.list).sort((a, b) => (a.done - b.done) || String(a.due || '9').localeCompare(String(b.due || '9')));
+  const rows = [[[`🛟 Подушка: $${fmt(c.total)}`, 'gl:cush', mon >= CUSH_USD ? 'primary' : undefined]]];
+  for (const x of all) {
+    if (x.done) { rows.push([[`✅ ${strike(x.name)}`, 'gl:' + x.id, 'success']]); continue; }
+    const full = x.saved >= x.sum;
+    rows.push([[`${x.name} · ${full ? 'накоплено' : gShort(x.saved, x.cur) + ' из ' + gShort(x.sum, x.cur)}`, 'gl:' + x.id, x.saved > 0 ? 'primary' : undefined]]);
+  }
+  rows.push([['🆕 Новая цель', 'gn']], [['↩️ Назад', 'd:3']]);
+  return send(ctx, '🎯 <b>ЦЕЛИ</b>', rows);
+}
+async function goalScreen(ctx, id) {
+  const g = await getGoals(ctx);
+  if (id === 'cush') {
+    const c = g.cush, mon = c.m[ymNow()] || 0;
+    return send(ctx, `🛟 <b>Подушка безопасности</b>\nВсего: <b>$${fmt(c.total)}</b>\nВ этом месяце: $${fmt(mon)} из $${CUSH_USD}${mon >= CUSH_USD ? ' ✅' : ''}` + (c.card ? `\n💳 Лежит: ${esc(c.card)}` : ''),
+      [[['💰 Отложил', 'gs:cush', 'primary']], [['↩️ Назад', 'gl:']]]);
+  }
+  const x = g.list[id]; if (!x) return goalsScreen(ctx);
+  const L = [`🎯 <b>${esc(x.name)}</b>`];
+  if (x.done) L.push(`✅ Выполнена${x.rec ? ' · ' + x.rec : ''}`, `💰 ${gMoney(x.sum, x.cur)}`);
+  else {
+    const p = Math.min(100, Math.round(x.saved / x.sum * 100));
+    L.push(`💰 Накоплено: <b>${gMoney(x.saved, x.cur)}</b> из ${gMoney(x.sum, x.cur)} (${p}%)`);
+    if (x.saved < x.sum) L.push(`Осталось: ${gMoney(x.sum - x.saved, x.cur)}`);
+    if (x.due) { const days = Math.round((Date.parse(x.due) - Date.parse(todayYmd())) / DAY); L.push(`🗓 До ${human(x.due)}` + (days >= 0 ? ` (${days} дн.)` : ' — срок прошёл')); }
+    if (x.card) L.push(`💳 Лежит: ${esc(x.card)}`);
+  }
+  const rows = [];
+  if (!x.done) { rows.push([['💰 Отложил', 'gs:' + id, 'primary']]); if (x.saved >= x.sum) rows.push([['✅ Готово — записать расход', 'gd:' + id, 'success']]); }
+  rows.push([['🗑 Удалить цель', 'gx:' + id]], [['↩️ Назад', 'gl:']]);
+  return send(ctx, L.join('\n'), rows);
+}
+async function goalAdd(ctx, cfg, id, amt, card) {          // отложил на цель / подушку
+  const g = await getGoals(ctx);
+  if (id === 'cush') { const c = g.cush, ym = ymNow(); c.total += amt; c.m[ym] = (c.m[ym] || 0) + amt; c.card = card; }
+  else { const x = g.list[id]; if (!x) return goalsScreen(ctx); x.saved += amt; x.card = card; }
+  await putGoals(ctx, g); await putSt(ctx, {});
+  const x = id === 'cush' ? null : g.list[id];
+  await send(ctx, `✅ Отложено ${gMoney(amt, x ? x.cur : '$')} → ${x ? esc(x.name) : 'Подушка'}` + (x && x.saved >= x.sum ? '\n🎉 Цель накоплена! Нажмите её и «Готово», когда потратите.' : ''));
+  return goalsScreen(ctx);
+}
+async function onGoal(ctx, cfg, k, v, mid, st) {
+  await gone(ctx, mid);
+  if (k === 'gl') { await putSt(ctx, {}); return v ? goalScreen(ctx, v) : goalsScreen(ctx); }
+  if (k === 'gs') {
+    const g = await getGoals(ctx), cur = v === 'cush' ? '$' : (g.list[v] || {}).cur;
+    await putSt(ctx, { g: { id: v }, await: 'gsum' });
+    return send(ctx, `💰 Сколько отложили? Напишите число, например ${cur === '$' ? '<code>50</code> (доллары)' : '<code>500000</code>'}.`, [[['↩️ Назад', 'gl:' + v]]]);
+  }
+  if (k === 'gk') {
+    if (!st.g || st.g.amt == null) return goalsScreen(ctx);
+    return goalAdd(ctx, cfg, st.g.id, st.g.amt, cfg.cards[+v] ? cfg.cards[+v].name : 'Наличные');
+  }
+  if (k === 'gd') {                                        // накоплено и потрачено → расход Личное
+    const x = (await getGoals(ctx)).list[v]; if (!x || x.done) return goalsScreen(ctx);
+    const d = Object.assign(draftFrom(cfg, 'Личное', { type: 'Расход', amount: x.saved || x.sum }, '', true),
+      { cur: x.cur, group: x.group, cat: x.cat, from: x.card ? (matchCard(cfg, x.card) || {}).name || null : null, comment: 'Цель: ' + x.name, goal: v, src: 'кнопка', n: 1, of: 1 });
+    return askNext(ctx, cfg, { d, queue: [], dir: 'Личное' });
+  }
+  if (k === 'gx') { const x = (await getGoals(ctx)).list[v]; if (!x) return goalsScreen(ctx);
+    return send(ctx, `🗑 Удалить цель «${esc(x.name)}»?`, [[['Да, удалить', 'gy:' + v], ['Нет', 'gl:' + v]]]); }
+  if (k === 'gy') { const g = await getGoals(ctx); delete g.list[v]; await putGoals(ctx, g); return goalsScreen(ctx); }
+  if (k === 'gn') { await putSt(ctx, { g: { nw: {} }, await: 'gname' }); return send(ctx, '🎯 <b>Новая цель.</b> Как назвать? Например <code>Отпуск</code>.', [[['↩️ Назад', 'gl:']]]); }
+  if (k === 'gw') { if (!st.g || !st.g.nw) return goalsScreen(ctx); return goalCreate(ctx, st.g.nw, null); }
+}
+async function goalCreate(ctx, nw, due) {
+  const g = await getGoals(ctx), id = 'G' + (++g._n);
+  g.list[id] = { id, name: nw.name, sum: nw.sum, cur: nw.cur, due, group: null, cat: null, saved: 0, card: null, done: false };
+  await putGoals(ctx, g); await putSt(ctx, {});
+  await send(ctx, `✅ Цель «${esc(nw.name)}» создана: ${gMoney(nw.sum, nw.cur)}${due ? ' к ' + human(due) : ''}.`);
+  return goalsScreen(ctx);
+}
+async function onGoalText(ctx, cfg, st, text) {           // ответы текстом/голосом в диалогах целей
+  if (st.await === 'gsum') {
+    const g = await getGoals(ctx), cur = st.g.id === 'cush' ? '$' : (g.list[st.g.id] || {}).cur || 'сум';
+    const a = parseAmount(text.replace(/сум[а-я]*/i, ''));
+    if (!a || !(a.amount > 0)) return send(ctx, 'Не понял сумму. Напишите только число, например <code>500000</code>.');
+    let amt = a.amount;
+    if (a.cur === '$' && cur !== '$') amt = Math.round(amt * await cbuRate(ctx, todayYmd()));   // $ на цель в сумах — по курсу ЦБ
+    st.g.amt = amt; st.await = null; await putSt(ctx, st);
+    const own = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.exp.includes('Личное') || c.inc.includes('Личное') || /вклад/i.test(c.name));   // карты Личного + вклад
+    return send(ctx, '💳 Куда положили?', [...chunk((own.length ? own : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [c.name, 'gk:' + i]), 2), [['↩️ Назад', 'gl:' + st.g.id]]]);
+  }
+  if (st.await === 'gname') {
+    st.g.nw.name = text.slice(0, 30); st.await = 'gamt'; await putSt(ctx, st);
+    return send(ctx, `💰 Сколько нужно на «${esc(st.g.nw.name)}»? Например <code>5000000</code> или <code>$200</code>.`, [[['↩️ Назад', 'gl:']]]);
+  }
+  if (st.await === 'gamt') {
+    const a = parseAmount(text.replace(/сум[а-я]*/i, ''));
+    if (!a || !(a.amount > 0)) return send(ctx, 'Не понял сумму. Например <code>5000000</code> или <code>$200</code>.');
+    st.g.nw.sum = a.amount; st.g.nw.cur = a.cur === '$' ? '$' : 'сум'; st.await = 'gdate'; await putSt(ctx, st);
+    return send(ctx, '🗓 К какой дате? Напишите, например, <code>31.12</code>.', [[['Без даты', 'gw']], [['↩️ Назад', 'gl:']]]);
+  }
+  if (st.await === 'gdate') {
+    const y = parseDate(text); if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>31.12</code>.', [[['Без даты', 'gw']]]);
+    return goalCreate(ctx, st.g.nw, y);
+  }
+}
+async function cushionReminder(env) {                      // 20-го в 23:50: если в этом месяце не отложено $200
+  if (Number(todayYmd().slice(8, 10)) !== CUSH_DAY) return;
+  const ctx = { env, out: [] }; const cfg = await config(ctx, true);
+  ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
+  const mon = (await getGoals(ctx)).cush.m[ymNow()] || 0; if (mon >= CUSH_USD) return;
+  ctx.noTrack = true;
+  await send(ctx, `🛟 <b>Подушка: в этом месяце отложено $${fmt(mon)} из $${CUSH_USD}</b>\nОтложите ещё $${fmt(CUSH_USD - mon)}.`, [[['💰 Отложил', 'gs:cush', 'primary']]]);
+}
+
 async function onCallback(ctx, q, again) {
   const cfg = await config(ctx);
   const [k, v] = q.data.split(':');
@@ -1285,6 +1417,7 @@ async function onCallback(ctx, q, again) {
     if (v === 'tab') return send(ctx, '📄 Таблицы аренды ещё нет. Привяжем позже.', [[['↩️ Назад', 'd:1']]]);
     return onCallback(ctx, { ...q, data: 'pt:-' }, true);
   }
+  if (['gl', 'gs', 'gk', 'gd', 'gx', 'gy', 'gn', 'gw'].includes(k)) return onGoal(ctx, cfg, k, v, mid, st);   // 🎯 Цели
   if (k === 'ln') {                                  // «Дал в долг» (владелец 27.11)
     await gone(ctx, mid);
     if (v === 'new') return askNext(ctx, cfg, { d: Object.assign(draftFrom(cfg, 'Личное', { type: 'Дал в долг' }, '', true), { src: 'кнопка', n: 1, of: 1, comment: 'Дал в долг' }), queue: [], dir: 'Личное' });
@@ -1364,7 +1497,7 @@ async function onCallback(ctx, q, again) {
     if (dir === 'PS SHOP') return send(ctx, '<b>PS SHOP</b>', [[['+', 'pt:+']], [['−', 'pt:-']], [['📉 Расходы', 'mr:out|0']], ...extra]);   // на всю ширину, с подписью (владелец 27.11)
     if (dir === 'Аренда PS5') return rentStart(ctx);
     if (dir === 'Leadex') return leadexScreen(ctx);
-    if (dir === 'Личное') return send(ctx, '<b>ЛИЧНОЕ</b>', [[['−', 'pt:-']], [['+', 'pt:+']], [['🤝 Дал в долг', 'ln:new', 'primary']], [['📉 Расходы', 'mr:out|3']], ...extra]);   // владелец 27.11
+    if (dir === 'Личное') return send(ctx, '<b>ЛИЧНОЕ</b>', [[['−', 'pt:-']], [['+', 'pt:+']], [['🤝 Дал в долг', 'ln:new', 'primary']], [['🎯 Цели', 'gl:'], ['📉 Расходы', 'mr:out|3']], ...extra]);   // владелец 27.11
     return send(ctx, `Пишите запись для <b>${dir}</b>. Например: «расход 85 000 продукты с Узума» или «пришло 450к за игру на Приёмку».`, extra);
   }
   if (k === 'bk' && st.tool) { ctx.editMid = mid; await putSt(ctx, {}); return dirMenu(ctx); }
@@ -1422,6 +1555,7 @@ async function onCallback(ctx, q, again) {
         const [f] = await gas(ctx, [{ op: 'find', sheet: 'Долги и накопления', col: 'A', value: `Мне должен: ${L[d.loan] ? L[d.loan].whom : ''} (${d.loan})` }]);
         if (f.row) await gas(ctx, [{ op: 'set', sheet: 'Долги и накопления', range: `E${f.row}:F${f.row}`, values: [[L[d.loan].sum, 0]] }]);
       }
+      if (!d.edit && d.goal) { const g = await getGoals(ctx); if (g.list[d.goal]) { g.list[d.goal].done = true; g.list[d.goal].rec = id; await putGoals(ctx, g); } }   // цель выполнена
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Предоплата') {   // новая сделка LEADEX
         const m = await getDeals(ctx); const did = 'D' + (++m._n);
         m[did] = { id: did, name: d.dealName || 'сделка ' + did, prepay: [id], closed: false, at: Date.now() }; await putDeals(ctx, m);
@@ -1550,7 +1684,7 @@ export class State {
 }
 
 export default {
-  async scheduled(ev, env, ectx) { ectx.waitUntil(ev.cron === '3 18 * * *' ? supReminder(env).then(() => flatReminder(env, 'eve')) : ev.cron === '31 7 * * *' ? flatReminder(env, 'day') : morning(env)); },
+  async scheduled(ev, env, ectx) { ectx.waitUntil(ev.cron === '3 18 * * *' ? supReminder(env).then(() => flatReminder(env, 'eve')).then(() => cushionReminder(env)) : ev.cron === '31 7 * * *' ? flatReminder(env, 'day') : morning(env)); },
   async fetch(req, env, ectx) {
     const u = new URL(req.url);
     if (u.pathname === '/tg' && req.method === 'POST') {
