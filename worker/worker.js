@@ -1910,6 +1910,13 @@ export default {
     if (u.pathname === '/flat') { await flatReminder(env, u.searchParams.get('w') || 'day'); return new Response('done'); }
     if (u.pathname === '/morning') { await morning(env); return new Response('done'); }
     if (u.pathname === '/fmbase' && req.method === 'POST') { const c = { env, dry: !!u.searchParams.get('dry') }; await store(c, { op: 'put', k: 'fmBase', v: await req.json() }); return new Response('saved'); }   // расходы из опроса (суммы не в коде)
+    if (u.pathname === '/loanset') {                          // служебное: поправить долг мне (сумма / срок): ?id=R#&sum=&due=YYYY-MM-DD
+      const ctx = { env, out: [] }, L = (await store(ctx, { op: 'get', k: 'loans' })) || {}, x = L[u.searchParams.get('id')];
+      if (!x) return Response.json({ error: 'нет такого долга', ids: Object.keys(L) });
+      if (u.searchParams.get('sum')) x.sum = Number(u.searchParams.get('sum'));
+      if (u.searchParams.get('due')) x.due = u.searchParams.get('due');
+      await store(ctx, { op: 'put', k: 'loans', v: L }); return Response.json(x);
+    }
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
     return new Response('ok');
   },
