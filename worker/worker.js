@@ -1436,9 +1436,14 @@ async function fmToday(ctx) {
   const done = Math.max(0, nal - day.nal0), need = day.need;
   return { fm, over, nal, rem, need, done, pct: fm.plan ? Math.max(0, Math.min(100, Math.round(nal / fm.plan * 100))) : 0 };
 }
-const fmLine = s => s.over ? `📊 Финмесяц закончился — нажмите «Разбор месяца»`
-  : s.rem ? `📊 План до ${dm(s.fm.due)}: ${gShort(s.nal)} из ${gShort(s.fm.plan)} (${s.pct}%)\n${s.done >= s.need ? '✅ Сегодня норма есть' : `🎯 Сегодня отложить: ${gShort(s.need)}` + (s.done ? ` (уже ${gShort(s.done)})` : '')}`
-  : `📊 План до ${dm(s.fm.due)} закрыт ✅ ${gShort(s.nal)} из ${gShort(s.fm.plan)}`;
+const fmLine = s => {                                 // строка плана на СТАРТ и утром (вид — владелец 27.11)
+  if (s.over) return '📊 <b>Финмесяц закончился</b> — нажмите «Разбор месяца»';
+  const L = [`📊 <b>План до ${dm(s.fm.due)}:</b>`, '', `💵 Нал: <b>${gShort(s.nal)}</b> (${s.pct}%)`, `📈 План: <b>${gShort(s.fm.plan)}</b>`];
+  if (!s.rem) return [...L, '', '✅ <b>План закрыт!</b>'].join('\n');
+  L.push(`⏳ Не хватает: <b>${gShort(s.rem)}</b>`, '');
+  L.push(s.done >= s.need ? '✅ <b>Сегодня норма есть</b>' : `🎯 Сегодня отложить: <b>${gShort(s.need - s.done)}</b>` + (s.done ? ` (уже ${gShort(s.done)})` : ''));
+  return L.join('\n');
+};
 async function fmScreen(ctx) {
   const s = await fmToday(ctx), f = s.fm, L = [];
   L.push(`📊 <b>План до ${human(f.due)}</b>`, `Финмесяц ${dm(f.start)} → ${dm(f.end)}`, '');
