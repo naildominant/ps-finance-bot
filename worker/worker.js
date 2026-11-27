@@ -361,8 +361,8 @@ async function askNext(ctx, cfg, st) {
     st.await = 'note'; await putSt(ctx, st);
     return void await send(ctx, '✍️ <b>Непредвиденные — что именно?</b> Напишите коротко, например <code>ремонт приставки</code>.', withBack());
   }
-  if (d.type === 'Между своими' && !d.from) return void await askCard(ctx, cfg, st, 'from', 'С какой карты?');
-  if (d.type === 'Между своими' && !d.to) return void await askCard(ctx, cfg, st, 'to', 'На какую карту?');
+  if (d.type === 'Между своими' && !d.from) return void await askCard(ctx, cfg, st, 'from', '💳 <b>С какой карты?</b>');
+  if (d.type === 'Между своими' && !d.to) return void await askCard(ctx, cfg, st, 'to', '💳 <b>На какую карту?</b>');
   if (isOut(d.type) && !d.from) return void await askCard(ctx, cfg, st, 'from', '💳 С какой карты или наличными?');
   if (d.dir === 'Аренда PS5' && !d.edit && ['Предоплата', 'Залог', 'Доход'].includes(d.type) && (!d.ord || (d.ord === 'new' && !d.ps))) {
     // аренда всегда привязана к клиенту = приставке △ ✕ □ (владелец 26.11); занятые приставки (открытые заказы) нового клиента не получают
@@ -423,7 +423,7 @@ const CAT_STYLE = { 'Игры PS5': 'success', 'Игры PS4': 'primary', 'GTA 6
   'OLX': 'success', 'Instagram': 'danger', 'Telegram': 'primary', 'Непредвиденные': 'danger' };
 const LOGO_STICKER = 'CAACAgEAAxkBAAIDUGsIoKXIO1jH-DR_xAZ2lhxDC9CUAAJ9AgAC3xnYRkWrScNxc61zPQQ';   // 💰 анимированный (27.11); прежнее лого: CAACAgIAAxkBAAIDPGsIn6xPb-Yt094Hbyt2vygJSQOXAAJNrAACXoTAS9-7y8vi2swfPQQ   // лого на экране СТАРТ
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
-const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['🎯 Цели', 'gl:', 'primary']], [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };   // долги и «Назад» → СТАРТ (владелец 26.11)
+const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['🎯 Цели', 'gl:', 'primary'], ['🔄 Перевод', 'tr', 'primary']], [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };   // долги и «Назад» → СТАРТ (владелец 26.11)
 
 // ---------- Запись в таблицу ----------
 async function save(ctx, cfg, d) {
@@ -1654,6 +1654,10 @@ async function onCallback(ctx, q, again) {
   }
   if (['gl', 'gs', 'gk', 'gd', 'gx', 'gy', 'gn', 'gw', 'gu', 'gdn'].includes(k)) return onGoal(ctx, cfg, k, v, mid, st);
   if (['fp', 'fmr', 'fmn', 'fma', 'fme'].includes(k)) return onFm(ctx, cfg, k, v, mid, st);   // 📊 план финмесяца   // 🎯 Цели
+  if (k === 'tr') {                                  // 🔄 перевод между своими картами (владелец 27.11): сумма → откуда → куда
+    await gone(ctx, mid);
+    return askNext(ctx, cfg, { d: Object.assign(draftFrom(cfg, 'Личное', { type: 'Между своими' }, '', true), { src: 'кнопка', n: 1, of: 1, comment: 'Перевод между своими' }), queue: [], dir: 'Личное' });
+  }
   if (k === 'ln') {                                  // «Дал в долг» (владелец 27.11)
     await gone(ctx, mid);
     if (v === 'new') return askNext(ctx, cfg, { d: Object.assign(draftFrom(cfg, 'Личное', { type: 'Дал в долг' }, '', true), { src: 'кнопка', n: 1, of: 1, comment: 'Дал в долг' }), queue: [], dir: 'Личное' });
