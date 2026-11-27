@@ -1917,6 +1917,19 @@ export default {
       if (u.searchParams.get('due')) x.due = u.searchParams.get('due');
       await store(ctx, { op: 'put', k: 'loans', v: L }); return Response.json(x);
     }
+    if (u.pathname === '/rec' && req.method === 'POST') {     // служебное: записать готовые записи по просьбе владельца из чата (как кнопкой «Записать»)
+      const ctx = { env, out: [] }, cfg = await config(ctx), ids = [];
+      for (const d of await req.json()) {
+        d.date = d.date || todayYmd(); d.src = d.src || 'чат'; const id = await save(ctx, cfg, d); ids.push(id);
+        if (d.type === 'Возврат долга' && d.loan) {
+          const L = (await store(ctx, { op: 'get', k: 'loans' })) || {}, x = L[d.loan];
+          if (x) { x.done = true; await store(ctx, { op: 'put', k: 'loans', v: L });
+            const [f] = await gas(ctx, [{ op: 'find', sheet: 'Долги и накопления', col: 'A', value: `Мне должен: ${x.whom} (${d.loan})` }]);
+            if (f.row) await gas(ctx, [{ op: 'set', sheet: 'Долги и накопления', range: `E${f.row}:F${f.row}`, values: [[x.sum, 0]] }]); }
+        }
+      }
+      return Response.json(ids);
+    }
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
     return new Response('ok');
   },
