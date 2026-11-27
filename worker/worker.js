@@ -408,8 +408,16 @@ async function askCard(ctx, cfg, st, side, q) {
   st.await = null; st.side = side; await putSt(ctx, st);
   const d = st.d, list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) =>
     isIn(d.type) ? c.inc.includes(d.dir) : isOut(d.type) ? c.exp.includes(d.dir) : true);
-  await send(ctx, q, withBack(chunk((list.length ? list : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [c.name, 'k:' + i]), 2)));
+  let L = list.length ? list : cfg.cards.map((c, i) => ({ c, i }));
+  if (d.type === 'Между своими') {                   // перевод: названия как в «Балансе» и тот же порядок (владелец 27.11)
+    const pos = c => TR_NAMES.findIndex(([k]) => c.name.startsWith(k)), nm = c => (TR_NAMES[pos(c)] || [])[1] || c.name;
+    L = L.slice().sort((a, b) => ((pos(a.c) + 1) || 99) - ((pos(b.c) + 1) || 99));
+    return void await send(ctx, q, withBack(chunk(L.map(({ c, i }) => [nm(c), 'k:' + i]), 2)));
+  }
+  await send(ctx, q, withBack(chunk(L.map(({ c, i }) => [c.name, 'k:' + i]), 2)));
 }
+const TR_NAMES = [['Приёмка', '⭐ ГЛАВНАЯ'], ['Apple Pay', '🍏 APPLE PAY'], ['Поставщик', '📦 ПОСТАВЩИК'], ['Капитал', '🎮 АРЕНДНАЯ'], ['Нал', '💵 НАЛ'],
+  ['Расходка', '🧾 PSРАСХОДЫ'], ['Ипак', '💳 ИПАК'], ['Доллары', '💲 ДОЛЛАРЫ'], ['UZUM вклад', '🏦 ВКЛАД'], ['Булка', '🥖 BULKA CARD'], ['Арс', '👤 АРС (карта брата)']];
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
 // эмодзи владельца после записи (владелец 26.11): расход — 💸; доход — 🤑
 const DONE_EMO = { 'Расход': '5319172285762919855', 'Дал в долг': '5319172285762919855', 'Вложение': '5319172285762919855', 'Доход': '5391292736647209211' };
