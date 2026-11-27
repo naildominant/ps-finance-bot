@@ -1876,7 +1876,8 @@ export default {
     }
     if (u.pathname === '/wipe') {                             // служебное: обнулить память бота (номера R, заказы, долги, черновики)
       const ctx = { env, out: [] };
-      for (const k of ['seq', 'trail', 'ords', 'pendShare', 'pendDone', 'supDebt', 'supUnknown', 'bro', 'lxLast', 'psLast', 'rateDay']) await store(ctx, { op: 'put', k, v: null });
+      for (const k of ['seq', 'trail', 'ords', 'pendShare', 'pendDone', 'supDebt', 'supUnknown', 'bro', 'lxLast', 'psLast', 'rateDay', 'deals', 'fm', 'fmHist', 'fmNote']) await store(ctx, { op: 'put', k, v: null });
+      { const g = await getGoals(ctx); for (const x of Object.values(g.list)) { x.saved = 0; x.card = null; x.done = false; x.rec = null; } g.cush = { total: 0, m: {} }; await putGoals(ctx, g); }   // цели остаются, накопленное — 0; долги (loans) не трогаем
       await putSt(ctx, {}); return Response.json({ ok: true, ords: await getOrds(ctx) });
     }
     if (u.pathname === '/ordreset') {                         // служебное: пересобрать заказы из открытых залогов/предоплат
