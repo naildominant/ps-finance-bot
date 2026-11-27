@@ -482,7 +482,7 @@ const CAT_STYLE = { 'Игры PS5': 'success', 'Игры PS4': 'primary', 'GTA 6
   'OLX': 'success', 'Instagram': 'danger', 'Telegram': 'primary', 'Непредвиденные': 'danger' };
 const LOGO_STICKER = 'CAACAgEAAxkBAAIDUGsIoKXIO1jH-DR_xAZ2lhxDC9CUAAJ9AgAC3xnYRkWrScNxc61zPQQ';   // 💰 анимированный (27.11); прежнее лого: CAACAgIAAxkBAAIDPGsIn6xPb-Yt094Hbyt2vygJSQOXAAJNrAACXoTAS9-7y8vi2swfPQQ   // лого на экране СТАРТ
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
-const dirMenu = async ctx => { if (ctx.wife) return wifeMenu(ctx); await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['🎯 Цели', 'gl:', 'primary'], ['🔄 Перевод', 'tr', 'primary']], ...await wifeRow(ctx), [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };
+const dirMenu = async ctx => { if (ctx.wife) return wifeStart(ctx); await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['🎯 Цели', 'gl:', 'primary'], ['🔄 Перевод', 'tr', 'primary']], ...await wifeRow(ctx), [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };
 async function wifeRow(ctx) { let n = 0; try { n = await wInboxCount(ctx); } catch (e) {} return [[[`👩 Запросы жены${n ? ' (' + n + ')' : ''}`, 'wi']]]; }   // долги и «Назад» → СТАРТ (владелец 26.11)
 
 // ---------- Запись в таблицу ----------
@@ -618,6 +618,15 @@ async function nsFinish(ctx, ns) {
 // «💸 Дай денюжку»: сумма → на что → запрос владельцу (✅ Перевёл → с какой карты → перевод на BULKA / ❌ Нет);
 // голосовые — сразу пересылаются владельцу; переводы владельца на BULKA — сообщение жене.
 const WIFE_OK = ['ok', 'no', 'g', 's', 'dt', 'bk', 'cd', 'noop'];   // кнопки записи, которые ей можно
+// СТАРТ жены (владелец 28.11): коротко актуальное + одна кнопка «Меню»; после каждого действия — сюда
+async function wifeStart(ctx) {
+  await putSt(ctx, {});
+  let b = 0, v = 0; try { b = await cardBal(ctx, /^Булка/); v = await cardBal(ctx, /^Вклад жены/i); } catch (e) {}
+  let goal = ''; try { const g = await getGoals(ctx); await goalProg(ctx, g);
+    const x = goalOrder(g).map(id => g.list[id]).find(x => x && !x.done && !/сюрприз/i.test(x.name || '') && (x.prog || 0) < x.sum);
+    if (x) goal = `\n🎯 Ближайшая цель: <b>${esc(x.name)}</b> — ${x.cur === '$' ? '$' + fmt(x.prog || 0) : fmt(x.prog || 0)} из ${x.cur === '$' ? '$' + fmt(x.sum) : fmt(x.sum)}`; } catch (e) {}
+  return send(ctx, `🌸 <b>Привет, солнышко!</b> 💖\n\n💳 BULKA: <b>${fmt(b)}</b>\n💎 Вклад: <b>${fmt(v)}</b>${goal}`, [[['💖 Меню', 'wm', 'primary']]]);
+}
 async function wifeMenu(ctx) {                            // девчачий стиль (владелец 28.11, задача 27)
   await putSt(ctx, {});
   return send(ctx, '🌸 <b>Привет, солнышко!</b> 💖\nЧто делаем сегодня? ✨', [[['🛍 Записать трату', 'wx', 'danger']], [['💳 Моя BULKA', 'wb'], ['💎 Мой вклад', 'wv']],
@@ -686,12 +695,12 @@ async function onWife(ctx, m, q, cfg) {
     if (k === 'wd') { await gone(ctx, mid); await putSt(ctx, { await: 'wsum' });
       return send(ctx, '💸 <b>Сколько нужно?</b> Напишите сумму, например <code>300000</code>.', [[['↩️ Меню', 'wm']]]); }
     if (k === 'wc') {                                   // на что → запрос владельцу
-      const st = await getSt(ctx); if (!st.wreq) return wifeMenu(ctx);
+      const st = await getSt(ctx); if (!st.wreq) return wifeStart(ctx);
       const groups = [...new Set(cfg.cats.filter(c => c.dir === 'Личное' && c.kind === 'Расход').map(c => c.group))];
       const what = v === 'x' ? 'другое' : groups[+v] || 'другое';
       await wInboxAdd(ctx, { kind: 'money', amount: st.wreq, what, chat: ctx.chat }); await putSt(ctx, {});   // в ящик владельца, без сообщения
       await edit(ctx, mid, `💸 Попросила ${fmt(st.wreq)} сум — ${esc(what)} 💕\nНаиль увидит запрос, ответ придёт сюда ✨`);
-      return wifeMenu(ctx);
+      return wifeStart(ctx);
     }
     { const st = await getSt(ctx);
       if (st.await === 'wgdate' && k === 'cl') return edit(ctx, mid, '📅 <b>К какой дате?</b> 🌸\nВыбери в календаре или напиши, например <code>8 марта</code>', wifeCal(await calendar(ctx, v, true)));
@@ -701,7 +710,8 @@ async function onWife(ctx, m, q, cfg) {
   }
   const text = (m.text || '').trim();
   if (/^\/start(@\w+)?$/i.test(text) && USER_WIPE && !ctx.dry) await wipeChat(ctx, m, 'wipeFrom:' + ctx.chat);   // как у владельца
-  if (/^\/(start|menu)(@\w+)?$/i.test(text) || /^(отмена|стоп|меню)$/i.test(text)) return wifeMenu(ctx);
+  if (/^\/start(@\w+)?$/i.test(text)) return wifeStart(ctx);
+  if (/^\/menu(@\w+)?$/i.test(text) || /^(отмена|стоп|меню)$/i.test(text)) return wifeMenu(ctx);
   if (m.voice || m.audio || m.video_note) {             // голосовое — сразу владельцу (владелец 28.11)
     for (const o of cfg.owners) await tg(ctx, 'forwardMessage', { chat_id: o, from_chat_id: ctx.chat, message_id: m.message_id }).catch(() => {});
     const f = m.voice || m.audio || m.video_note;
@@ -727,7 +737,7 @@ async function onWife(ctx, m, q, cfg) {
   if (st.await === 'wgdate') { const y = parseFuture(text); if (!y) return send(ctx, 'Не поняла дату 🙈 Напишите, например, <code>20.12</code>');
     const g = { ...st.wg, due: y }; await wInboxAdd(ctx, { kind: 'goal', name: g.name, amount: g.amount, due: y, chat: ctx.chat }); await putSt(ctx, {});
     await send(ctx, `🎀 <b>Отправила Наилю!</b>\n${esc(g.name)} — ${fmt(g.amount)} сум до ${dm(y)} ✨\nКак ответит — напишу сюда 💖`);
-    return wifeMenu(ctx); }
+    return wifeStart(ctx); }
   if (st.await === 'tool' && st.tool && st.tool.kind === 'interest') return onToolText(ctx, cfg, st, text);   // 1-е число: остаток вклада
   if (st.await === 'wsum') {                            // «Дай денюжку»: сумма → на что
     const a = parseAmount(text); if (!a) return send(ctx, 'Напишите сумму числом, например <code>300000</code>.');
@@ -1154,6 +1164,11 @@ async function rentList(ctx, T, back) {
 }
 async function viewerScreen(ctx, data, cfg) {          // меню брата: только смотреть
   const back = [['↩️ Меню аренды', 'vm']];
+  if (data === 'vs') {                                   // СТАРТ брата (владелец 28.11): актуальное + одна кнопка «Меню»
+    const o = await rentOwe(ctx, cfg), os = ordList(await getOrds(ctx));
+    return send(ctx, ['💪 <b>АРЕНДА PS5</b>', '', `🎮 Сейчас в аренде: <b>${os.length}</b>${os.length ? ' (' + os.map(x => x.ps || x.id).join(' ') + ')' : ''}`,
+      o.due > 0 ? `💸 К переводу вам: <b>${fmt(o.due)}</b>` : '✅ Вам всё переведено'].join('\n'), [[['📋 Меню', 'vm', 'primary']]]);
+  }
   if (data === 'vo') {
     const m = await getOrds(ctx), items = await openItems(ctx), os = ordList(m);
     const L = ['📋 <b>Текущие сделки</b>', ''];
@@ -1659,7 +1674,7 @@ async function debtRows(ctx, cfg) {                         // кнопки до
   return rows;
 }
 async function startScreen(ctx) {
-  if (ctx.wife) return wifeMenu(ctx);
+  if (ctx.wife) return wifeStart(ctx);
   await purge(ctx); await putSt(ctx, {});
   const cfg = await config(ctx);
   const rows = [[['СТАРТ', 'menu']]];
@@ -2394,7 +2409,7 @@ async function handle(ctx, upd) {
     ctx.viewer = true; ctx.noTrack = true;
     if (m && /^\/start(@\w+)?$/i.test(m.text || '') && USER_WIPE && !ctx.dry) await wipeChat(ctx, m, 'wipeFrom:' + ctx.chat);   // как у владельца
     if (q) { await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id }); await gone(ctx, q.message.message_id); }
-    return viewerScreen(ctx, q ? q.data : 'vm', cfg).catch(e => send(ctx, '⚠️ Ошибка: ' + e.message));
+    return viewerScreen(ctx, q ? q.data : 'vs', cfg).catch(e => send(ctx, '⚠️ Ошибка: ' + e.message));   // /start → СТАРТ брата
   }
   if ((cfg.wife || []).includes(String(from.id)) && !cfg.owners.includes(String(from.id))) {   // жена (задача 25)
     ctx.wife = true;
