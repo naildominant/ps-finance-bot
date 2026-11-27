@@ -1232,7 +1232,7 @@ const autoCard = c => /^Нал/.test(c || '') || /вклад/i.test(c || '');
 async function goalProg(ctx, g) {                      // x.prog — накоплено (ручное + доля Нала/вклада по приоритету)
   const [k] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
   const bal = re => { const r = k.values.find(r => re.test(String(r[0] || ''))); return r ? Math.max(0, Number(r[8]) || 0) : 0; };
-  let nal = bal(/^Нал/), vk = bal(/вклад/i); const rate = await cbuRate(ctx, todayYmd());
+  let nal = Math.max(0, await nalBalance(ctx)), vk = bal(/вклад/i); const rate = await cbuRate(ctx, todayYmd());
   for (const id of goalOrder(g)) {
     const x = g.list[id]; if (x.done) { x.prog = x.sum; x.auto = 0; continue; }
     const k1 = x.cur === '$' ? rate : 1, base = autoCard(x.card) ? 0 : x.saved || 0;
@@ -1389,11 +1389,14 @@ function fmBounds(ymd) {
 }
 const dm = ymd => ymd.slice(8, 10) + '.' + ymd.slice(5, 7);
 const inVklad = x => /вклад/i.test(x.card || '') || x.name === 'Сюрприз';   // копится на вкладе — не в план по Налу
-async function nalBalance(ctx) {
+async function cashPool(ctx) {
   const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
-  const r = g.values.find(r => /^Нал/.test(String(r[0] || '')));
-  return r ? Number(r[8]) || 0 : 0;
+  const bal = re => { const r = g.values.find(r => re.test(String(r[0] || ''))); return r ? Number(r[8]) || 0 : 0; };
+  const cush = ((await getGoals(ctx)).cush || {}).total || 0, rate = await cbuRate(ctx, todayYmd());
+  const sum = bal(/^Нал/), usd = Math.max(0, bal(/^Доллары/) - cush);
+  return { sum, usd, rate, total: Math.round(sum + usd * rate) };
 }
+async function nalBalance(ctx) { return (await cashPool(ctx)).total; }
 async function fmStats(ctx, start, end) {             // доходы и расходы за финмесяц из Журнала
   const recs = (await journal(ctx)).filter(x => { const d = ymdT(new Date(x.t + TZ_MS)); return x.t && d >= start && d <= end && !/^Доля из/.test(x.cat || ''); });
   const s = { inc: {}, exp: {}, lexp: {}, incT: 0, expT: 0, lexpT: 0 };
@@ -1447,7 +1450,7 @@ const fmLine = s => {                                 // строка плана
 async function fmScreen(ctx) {
   const s = await fmToday(ctx), f = s.fm, L = [];
   L.push(`📊 <b>План до ${human(f.due)}</b>`, `Финмесяц ${dm(f.start)} → ${dm(f.end)}`, '');
-  L.push(`💰 Собрано (Нал): <b>${fmt(s.nal)}</b> из ${fmt(f.plan)} (${s.pct}%)`);
+  { const c = await cashPool(ctx); L.push(`💰 Собрано: <b>${fmt(s.nal)}</b> из ${fmt(f.plan)} (${s.pct}%)`, `   💵 Нал ${fmt(c.sum)}` + (c.usd ? ` + $${fmt(c.usd)} свободных (кроме подушки)` : '')); }
   if (s.over) L.push('⏳ Месяц закончился — пора на разбор.');
   else if (s.rem) { const days = Math.round((Date.parse(f.end) - Date.parse(todayYmd())) / DAY) + 1;
     L.push(`Осталось: ${fmt(s.rem)} · дней: ${days}`, `🎯 <b>Сегодня отложить в Нал: ${fmt(s.need)}</b> (день ×${String(fmW(todayYmd())).replace('.', ',')})` + (s.done ? `\nСегодня уже: ${fmt(s.done)}${s.done >= s.need ? ' ✅' : ''}` : ''),
@@ -2001,6 +2004,12 @@ export default {
         }
       }
       return Response.json(ids);
+    }
+    if (u.pathname === '/cushset') {                         // служебное: подушка ?total=$&month=$ (за текущий финмесяц)
+      const ctx = { env, out: [] }, g = await getGoals(ctx);
+      if (u.searchParams.get('total')) g.cush.total = Number(u.searchParams.get('total'));
+      if (u.searchParams.get('month')) g.cush.m[fmBounds().start] = Number(u.searchParams.get('month'));
+      g.cush.card = 'Доллары'; await putGoals(ctx, g); return Response.json(g.cush);
     }
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
     return new Response('ok');
