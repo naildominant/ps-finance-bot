@@ -506,6 +506,71 @@ const itemButtons = x => x.type === 'Залог'
 const botRec = (ctx, cfg, f) => save(ctx, cfg, { cur: 'сум', date: todayYmd(), src: 'бот', ...f });
 async function setItem(ctx, x, sum, status) { await gas(ctx, [{ op: 'set', sheet: ZS, range: `E${x.row}:H${x.row}`, values: [[sum, x.card, x.book || '', status]] }]); }
 
+// ---------- /newschet: выравнивание остатков по всем картам (владелец 27.11, задача 19; временная команда) ----------
+const NS_ORDER = TR_NAMES.filter(([k]) => k !== 'Арс');   // 4 главные первыми, потом остальные; карту брата не спрашиваем
+async function nsStart(ctx) {
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+  const all = g.values.filter(r => r[0] && r[2]);
+  const cards = NS_ORDER.map(([w, t]) => { const r = all.find(r => String(r[0]).startsWith(w)); return r && { card: r[0], t: t.replace(/^\S+\s/, ''), usd: r[2] === '$' }; }).filter(Boolean);
+  const ns = { cards, i: 0, res: [] };
+  await putSt(ctx, { await: 'ns', ns });
+  await send(ctx, '🧮 <b>Сверка остатков</b>\nПо очереди спрошу, сколько сейчас на каждой карте в банке. Пишите сумму числом.\nЕсли не сошлось — запишу поправку (в доходы и расходы она не идёт).');
+  return nsAsk(ctx, ns);
+}
+const nsAmt = (c, v) => c.usd ? '$' + fmt(v) : fmt(v) + ' сум';
+async function nsAsk(ctx, ns) {
+  if (ns.i >= ns.cards.length) return nsFinish(ctx, ns);
+  const c = ns.cards[ns.i];
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+  const r = g.values.find(r => String(r[0]) === c.card); c.now = Number(r && r[8]) || 0;
+  await putSt(ctx, { await: 'ns', ns });
+  return send(ctx, `🧮 <b>${ns.i + 1}/${ns.cards.length}. ${esc(c.t)}</b>\nПо записям: <b>${nsAmt(c, c.now)}</b>\nСколько сейчас в банке?`,
+    [[['✅ Совпадает', 'ns:ok', 'success'], ['Пропустить', 'ns:skip']], [['⛔ Закончить сверку', 'ns:end']]]);
+}
+async function nsText(ctx, cfg, st, text) {
+  const ns = st.ns, c = ns.cards[ns.i];
+  if (ns.wait === 'note') return nsSave(ctx, cfg, ns, text.trim().slice(0, 200));
+  const a = parseAmount(text);
+  if (!a) return send(ctx, `Не понял число. Напишите, сколько на «${esc(c.t)}», например <code>1250000</code>.`);
+  const diff = c.usd ? Math.round((a.amount - c.now) * 100) / 100 : Math.round(a.amount - c.now);   // сумы — без копеек
+  if (!diff) return onNs(ctx, cfg, st, 'ok');
+  ns.bank = a.amount; ns.wait = 'note'; await putSt(ctx, { await: 'ns', ns });
+  return send(ctx, `❗ <b>${esc(c.t)}</b>: по записям ${nsAmt(c, c.now)}, в банке ${nsAmt(c, a.amount)} — разница <b>${diff > 0 ? '+' : '−'}${nsAmt(c, Math.abs(diff))}</b>.\n<b>Что это было?</b> Напишите пару слов (например «комиссия», «забыл записать такси»).`,
+    [[['🤷 Не знаю', 'ns:idk']]]);
+}
+async function nsSave(ctx, cfg, ns, note) {
+  const c = ns.cards[ns.i], diff = c.usd ? Math.round((ns.bank - c.now) * 100) / 100 : Math.round(ns.bank - c.now);
+  const f = { dir: '—', type: 'Корректировка', amount: Math.abs(diff), cur: c.usd ? '$' : 'сум', comment: `Сверка /newschet: по записям ${fmt(c.now)}, в банке ${fmt(ns.bank)}` + (note ? ` (${note})` : '') };
+  if (diff > 0) f.to = c.card; else f.from = c.card;
+  const rid = await botRec(ctx, cfg, f);
+  ns.res.push({ t: c.t, usd: c.usd, now: c.now, bank: ns.bank, diff, note: note || 'Не знаю', rid });
+  await send(ctx, `🧮 Записал поправку ${rid}: «${esc(c.t)}» теперь ${nsAmt(c, ns.bank)}.`);
+  delete ns.wait; delete ns.bank; ns.i++;
+  return nsAsk(ctx, ns);
+}
+async function onNs(ctx, cfg, st, v) {
+  const ns = st.ns; if (!ns) return startScreen(ctx);
+  if (v === 'idk') return nsSave(ctx, cfg, ns, '');
+  if (v === 'end') return nsFinish(ctx, ns);
+  if (v === 'ok') ns.res.push({ t: ns.cards[ns.i].t, ok: true });
+  delete ns.wait; delete ns.bank; ns.i++;
+  return nsAsk(ctx, ns);
+}
+async function nsFinish(ctx, ns) {
+  await putSt(ctx, {});
+  const bad = ns.res.filter(x => !x.ok), ok = ns.res.filter(x => x.ok);
+  if (bad.length) {
+    const d = todayYmd(), dd = d.slice(8, 10) + '.' + d.slice(5, 7) + '.' + d.slice(0, 4);
+    try { await gas(ctx, bad.map(x => ({ op: 'append', sheet: 'Сверки', row: [dd, x.t, x.now, x.bank, x.diff, x.usd ? '$' : 'сум', x.note, x.rid] }))); } catch (e) {}
+  }
+  const L = ['🧮 <b>Сверка закончена</b>', ''];
+  if (bad.length) { L.push(`<b>Недочёты (${bad.length}):</b>`); bad.forEach((x, n) => L.push(`${n + 1}. <b>${esc(x.t)}</b>: ${x.diff > 0 ? '+' : '−'}${nsAmt(x, Math.abs(x.diff))} — ${esc(x.note)}`)); L.push('', 'Записал в лист «Сверки».'); }
+  else L.push('✅ Недочётов нет.');
+  if (ok.length) L.push('', '✅ Совпало: ' + ok.map(x => esc(x.t)).join(', '));
+  ctx.noTrack = true; await send(ctx, L.join('\n')); ctx.noTrack = false;
+  return startScreen(ctx);
+}
+
 async function onTool(ctx, q) {
   const cfg = await config(ctx);
   const [k, id] = q.data.split(':'); const mid = q.message.message_id;
@@ -928,6 +993,7 @@ async function onMessage(ctx, m) {
   }
   if (st.await === 'claude' && text && !/^\/(start|menu)$/i.test(text)) return claudeAdd(ctx, text);   // правка — раньше всех проверок («главное меню» в тексте правки не уводит в меню)
   if (/^\/menu$/i.test(text) || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
+  if (/^\/newschet(@\w+)?$/i.test(text)) return nsStart(ctx);
   if (/^\/(claude|clone|клод)(@\w+)?$/i.test(text)) { await putSt(ctx, { await: 'claude', g: {} });
     return send(ctx, '🎧 <b>Слушаю.</b> Напишите или скажите голосом правку — я её запишу.'); }
   if (m.voice || m.audio || m.video_note) {
@@ -935,7 +1001,7 @@ async function onMessage(ctx, m) {
     const said = await transcribe(ctx, await tgFile(ctx, f.file_id));
     if (!said) return send(ctx, '🎤 Не расслышал. Попробуйте ещё раз или напишите текстом.');
     await send(ctx, '🎤 ' + esc(said));
-    if (st.await && (st.d || st.g)) return onMessage(ctx, { ...m, voice: null, audio: null, video_note: null, text: said });
+    if (st.await && (st.d || st.g || st.ns)) return onMessage(ctx, { ...m, voice: null, audio: null, video_note: null, text: said });
     ctx.ptype = st.ptype; ctx.ord = st.ord; ctx.ps = st.ps; return startDraft(ctx, cfg, st.dir || null, said, 'голос');
   }
   const img = m.photo ? m.photo[m.photo.length - 1] : (m.document && /^image\//.test(m.document.mime_type || '') ? m.document : null);
@@ -954,6 +1020,7 @@ async function onMessage(ctx, m) {
   }
   if (m.document) return send(ctx, 'Этот файл я не читаю. Пришлите фото, голосовое или текст.');
   if (!text) return;
+  if (st.await === 'ns' && st.ns) return nsText(ctx, cfg, st, text);   // /newschet: сумма в банке или пометка
   if (st.await === 'tool' && st.tool && st.tool.kind === 'hpsadd') {   // рубли за заявку
     const r = num(text.replace(/руб[а-я.]*|₽|rub/ig, ''));
     return r > 0 ? addSupRub(ctx, r) : send(ctx, 'Напишите рубли числом, например <code>400</code>, или нажмите «Позже».', [[['Позже', 'sp:later']]]);
@@ -1730,6 +1797,7 @@ async function onCallback(ctx, q, again) {
     return askNext(ctx, cfg, nst);
   }
   if (k === 'menu') { await gone(ctx, mid); return dirMenu(ctx); }
+  if (k === 'ns') { await gone(ctx, mid); return onNs(ctx, cfg, st, v); }
   if (k === 'supd') { await gone(ctx, mid); await store(ctx, { op: 'put', k: 'supDebt', v: null }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); return closeSupplier(ctx, cfg); }   // долг погашен до следующего /report
   if (k === 'sp') {                                  // после заявки PS SHOP: сколько рублей ушло поставщику
     await tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } });
