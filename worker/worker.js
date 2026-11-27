@@ -347,6 +347,7 @@ function summary(d) {
   const cl = n => n ? cardLabel({ name: n }) : '—';   // показываем как в «Балансе», в таблицу пишется прежнее имя
   if (d.type === 'Между своими') L.push(`💳 ${cl(d.from)} → ${cl(d.to)}`);
   else L.push(`💳 ${cl(isOut(d.type) ? d.from : d.to)}`);
+  if (d.until) L.push(`🗓 Срок: ${dm(d.since || d.date)}–${dm(d.until)}`);
   if (d.type === 'Предоплата') L.push(d.dir === 'Leadex' ? `🤝 Сделка: ${esc(d.dealName || '—')}` : `🗓 Бронь на ${d.book ? human(d.book) : '—'}`);
   if (d.type === 'Предоплата' || d.type === 'Залог') L.push('ℹ️ Чужие деньги: в доход не идут, пока не закроете');
   if (d.type === 'Дал в долг') L.push(`🤝 Кому: ${esc(d.whom || '—')}`, `🗓 Вернут: ${d.due ? human(d.due) : '—'}`, 'ℹ️ Не расход: деньги вернутся');
@@ -391,6 +392,13 @@ async function askNext(ctx, cfg, st) {
   }
   if (d.type === 'Предоплата' && d.dir === 'Аренда PS5' && !d.to) { const c = cardByWord(cfg, 'Капитал'); if (c) d.to = c.name; }   // предоплата аренды всегда на Капитал (владелец 26.11)
   if (isIn(d.type) && !d.to) return void await askCard(ctx, cfg, st, 'to', '💳 На какую карту пришли деньги?');
+  if (d.dir === 'Аренда PS5' && d.type === 'Доход' && d.ord && !d.edit && !d.until) {   // срок аренды (владелец 27.11): с какого — по какое
+    const o = d.ord !== 'new' ? (await getOrds(ctx))[d.ord] : null;
+    d.since = o && o.until && /Продлен/.test(d.cat || '') ? o.until : d.date;
+    st.await = 'until'; await putSt(ctx, st);
+    const b = [1, 2, 3, 7].map(n => { const y = shiftYmd(d.since, n); return [`${dm(y)} (${n} ${n === 1 ? 'сутки' : n < 5 ? 'суток' : 'суток'})`, 'un:' + y]; });
+    return void await send(ctx, `🗓 <b>Аренда с ${dm(d.since)} — до какого числа?</b>\nНажмите или напишите дату, например <code>${dm(shiftYmd(d.since, 1))}</code>.`, withBack(chunk(b, 2)));
+  }
   if (d.type === 'Дал в долг' && !d.whom) { st.await = 'whom'; await putSt(ctx, st);
     return void await send(ctx, '🤝 <b>Кому дали в долг?</b> Напишите имя.', withBack()); }
   if (d.type === 'Дал в долг' && !d.due) { st.await = null; await putSt(ctx, st);
@@ -911,6 +919,24 @@ async function rentEvent(ctx, d, id) {                 // запись по ар
     : d.type === 'Между своими' && /^Арс/.test(d.to || '') ? `💪 <b>Брату переведено: ${money}</b>` : null;
   if (t) await rentNotify(ctx, t + (d.comment && d.type !== 'Между своими' ? `\n💬 ${esc(d.comment)}` : ''));
 }
+// брату: каждая оплата аренды строкой со сроком (дд.мм–дд.мм), расходы — дата, на что, сумма; без карт (владелец 27.11)
+async function rentList(ctx, T, back) {
+  const [j] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: 'A2:P3000' }]);
+  const ym = todayYmd().slice(0, 7), [y, mo] = ym.split('-').map(Number), m = await getOrds(ctx);
+  const recs = j.values.filter(r => r[0] && r[12] !== 'удалено' && r[3] === 'Аренда PS5' && r[4] === T && r[1] && r[1].d)
+    .map(r => ({ id: r[0], day: ymdT(new Date(r[1].d + TZ_MS)), cat: r[6] || r[5] || '', uzs: Number(r[7]) || 0, ord: r[15] || '' }))
+    .filter(x => x.day.startsWith(ym)).sort((a, b) => b.day.localeCompare(a.day));
+  const L = [`${T === 'Доход' ? '📈 <b>Доходы' : '📉 <b>Расходы'} аренды за ${MONTHS[mo - 1].toLowerCase()} ${y}</b>`, ''];
+  let tot = 0;
+  for (const x of recs) {
+    tot += x.uzs; const o = m[x.ord], per = o && o.per && o.per[x.id];
+    if (T === 'Доход') L.push(`${per ? dm(per[0]) + '–' + dm(per[1]) : dm(x.day)} · ${o && o.ps ? o.ps + ' ' : ''}${x.ord || ''}${/Продлен/.test(x.cat) ? ' (продление)' : /Предоплата/.test(x.cat) ? ' (бронь)' : ''} — <b>${fmt(x.uzs)}</b>`);
+    else L.push(`${dm(x.day)} · ${esc(x.cat)} — <b>${fmt(x.uzs)}</b>`);
+  }
+  if (!recs.length) L.push('Записей пока нет.');
+  L.push('━━━━━━━━━━', `<b>Всего: ${fmt(tot)} сум</b>`);
+  return send(ctx, L.join('\n'), [back]);
+}
 async function viewerScreen(ctx, data, cfg) {          // меню брата: только смотреть
   const back = [['↩️ Меню аренды', 'vm']];
   if (data === 'vo') {
@@ -921,8 +947,7 @@ async function viewerScreen(ctx, data, cfg) {          // меню брата: �
     L.push('', `✅ Сделок закрыто с ${dm(fmBounds().start)}: <b>${closed}</b>`);   // с начала финмесяца (владелец 27.11)
     return send(ctx, L.join('\n'), [back]);
   }
-  if (data === 'vi') return monthReport(ctx, 'in', 1);
-  if (data === 've') return monthReport(ctx, 'out', 1);
+  if (data === 'vi' || data === 've') return rentList(ctx, data === 'vi' ? 'Доход' : 'Расход', back);
   if (data === 'vv') return rentInvScreen(ctx, cfg);
   const o = await rentOwe(ctx, cfg);
   return send(ctx, ['🎮 <b>АРЕНДА PS5</b>', '', `💵 Доходы: <b>${fmt(o.inc)}</b>`, `💸 Расходы: <b>${fmt(o.exp)}</b>`, `📈 Прибыль: <b>${fmt(o.profit)}</b>`, '',
@@ -1073,6 +1098,11 @@ async function onMessage(ctx, m) {
     remember(st); st.d.cat = `Непредвиденные (${text.slice(0, 60)})`; st.await = null;
     return reshow(ctx, st);
   }
+  if (st.await === 'until' && st.d) {
+    const y = parseDate(text);
+    if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>28.11</code>.');
+    remember(st); st.d.until = y; return reshow(ctx, st);
+  }
   if (st.await === 'book' && st.d) {
     const y = parseDate(text);
     if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>28.11</code>.');
@@ -1222,6 +1252,7 @@ async function afterOrder(ctx, cfg, d, id) {
   if (d.type === 'Залог') o.zalog.push(id);
   let ask = false;
   if (d.type === 'Доход') (o.pay = o.pay || []).push(id);
+  if (d.type === 'Доход' && d.until) { o.until = d.until; (o.per = o.per || {})[id] = [d.since || d.date, d.until]; o.warned = false; }   // срок аренды
   if (d.type === 'Доход' && !o.paid) {
     o.paid = true; ask = !o.zalog.length;                // залог уже есть — не спрашиваем
     const items = await openItems(ctx);
@@ -1973,6 +2004,7 @@ async function onCallback(ctx, q, again) {
   if (!st.d) return edit(ctx, mid, 'Эта запись уже закрыта. Нажмите /menu, чтобы начать новую.');
   if (['ty', 'g', 's', 'k', 'dt'].includes(k)) remember(st);
   const d = st.d;
+  if (k === 'un') { remember(st); d.until = v; st.await = null; await gone(ctx, mid); return askNext(ctx, cfg, st); }   // срок аренды
   if (k === 'ty') { d.type = TYPES[+v]; d.group = d.cat = null; await gone(ctx, mid); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
   if (k === 'g') {
     const g = st.groups[+v]; const subs = cfg.cats.filter(c => c.dir === d.dir && c.kind === d.type && c.group === g);
@@ -2259,6 +2291,8 @@ export default {
       const msg = u.searchParams.get('msg'); if (msg) { const cfg = await config(ctx); ctx.chat = cfg.owners[0]; ctx.noTrack = true; await send(ctx, msg); }
       return Response.json(q);
     }
+    if (u.pathname === '/ordper') { const c = { env, out: [] }, m = await getOrds(c), o = m[u.searchParams.get('id')]; if (!o) return new Response('no order');   // служебное: срок оплаты ?id=A1&r=R6&from=YYYY-MM-DD&to=YYYY-MM-DD
+      (o.per = o.per || {})[u.searchParams.get('r')] = [u.searchParams.get('from'), u.searchParams.get('to')]; if (!o.closed) o.until = u.searchParams.get('to'); await putOrds(c, m); return Response.json(o); }
     if (u.pathname === '/rentsync') { const c = { env, out: [] }; await rentSync(c, await getOrds(c)); return new Response('synced'); }   // служебное: перезаписать лист «Аренда сделки»
     if (u.pathname === '/supget') { const c = { env, out: [] }; return Response.json({ debt: await store(c, { op: 'get', k: 'supDebt' }), unknown: await store(c, { op: 'get', k: 'supUnknown' }) }); }   // служебное: посмотреть долг поставщику
     if (u.pathname === '/supset') { const c = { env, out: [] }, rub = Number(u.searchParams.get('rub')), uz = Number(u.searchParams.get('uzs')); const v = { rub, usdt: null, uzs: uz > 0 ? uz : supRound(rub * RUB_TO_UZS), at: Date.now() }; await store(c, { op: 'put', k: 'supDebt', v }); await store(c, { op: 'put', k: 'supUnknown', v: false }); return Response.json(v); }   // служебное: долг поставщику в рублях
