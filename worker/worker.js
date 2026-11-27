@@ -197,6 +197,7 @@ async function readHps(ctx, bytes) {
   const rub = num(j.rub), usdt = num(j.usdt);
   return rub > 0 ? { rub, usdt: usdt > 0 ? usdt : null } : null;
 }
+const OLD_ZALOG = 150000;   // залог прошлого клиента на Капитале, не записан (до бота) — пока висит пометкой в Балансе (владелец 27.11, /claude №7)
 const supRound = n => Math.ceil(n / 10000) * 10000;   // долг поставщику — всегда вверх до 10 000 (владелец 27.11: «закидываю ровную сумму»)
 // рубли за одну заявку PS SHOP → прибавить к долгу поставщику
 async function addSupRub(ctx, rub) {
@@ -527,7 +528,7 @@ async function onTool(ctx, q) {
       const v = Number(r[8]) || 0, j = Number(r[9]) || 0, usd = r[2] === '$';
       const rent = t === 'АРЕНДНАЯ', bro = rent ? Math.min(broDue, Math.max(0, v - j)) : 0, mine = rent ? Math.max(0, v - j - bro) : 0;
       L.push(`${++n}. <b>${esc(t)}</b>\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j && !rent ? ` (из них чужие ${fmt(j)})` : ''}`
-        + (rent && v ? (j ? `\n      🔐 Залог: <b>${fmt(j)}</b>` : '') + (bro ? `\n      💪 Брата: <b>${fmt(bro)}</b>` : '') + (mine ? `\n      🧡 Ваше: <b>${fmt(mine)}</b> — можно перевести себе` : '') : '')
+        + (rent && v ? (j ? `\n      🔐 Залог: <b>${fmt(j)}</b>` : '') + (bro ? `\n      💪 Брата: <b>${fmt(bro)}</b>` : '') + (mine ? `\n      🧡 Ваше: <b>${fmt(mine)}</b>` + (mine <= OLD_ZALOG ? ' (залог от прошлого клиента)' : ` (из них ${fmt(OLD_ZALOG)} — залог от прошлого клиента) — можно перевести себе ${fmt(mine - OLD_ZALOG)}`) : '') : '')
         + (t === 'ДОЛЛАРЫ' ? `\n      🔒 ФОНД: <b>$${fmt(Math.min(fond, v))}</b>\n      💼 Отложено: <b>$${fmt(Math.max(0, v - fond))}</b>` : '') , '');
       if (!usd) { tot += v; alien += j + bro; }   // доля брата — тоже не ваша
     }
