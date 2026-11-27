@@ -1528,6 +1528,22 @@ async function fmEvening(env) {                       // 23:03: норма дн�
   ctx.noTrack = true;
   await send(ctx, `📊 <b>Сегодня норма не набрана</b>\nОтложено в Нал: ${fmt(s.done)} из ${fmt(s.need)}, осталось ${fmt(s.need - s.done)}.\nНе успели — остаток разложится на следующие дни.`, [[['📊 План', 'fp', 'primary']]]);
 }
+// ---------- Лимиты (задача 11, владелец 27.11): после расхода — предупредить на 70% и 100% лимита финмесяца ----------
+async function limitCheck(ctx, d) {
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Лимиты', range: 'A2:H40' }]);
+  const warn = (await store(ctx, { op: 'get', k: 'limWarn' })) || {}, fs = fmBounds().start; let changed = false;
+  for (const r of g.values || []) {
+    if (r[0] !== d.dir || !(r[2] === 'группа' ? r[1] === d.group : r[1] === d.cat)) continue;
+    const lim = num(r[5]), spent = num(r[6]); if (!(lim > 0)) continue;
+    const pct = Math.round(spent / lim * 100), lvl = pct >= 100 ? 100 : pct >= 70 ? 70 : 0, key = fs + '|' + r[0] + '|' + r[1];
+    if (!lvl || (warn[key] || 0) >= lvl) continue;
+    warn[key] = lvl; changed = true;
+    await send(ctx, lvl === 100
+      ? `🔴 <b>Лимит «${esc(r[1])}» исчерпан</b>\nПотрачено ${fmt(spent)} из ${fmt(lim)} (${pct}%) — до 26-го.`
+      : `⚠️ <b>«${esc(r[1])}»: ${pct}% лимита</b>\nПотрачено ${fmt(spent)} из ${fmt(lim)}, осталось ${fmt(lim - spent)} до 26-го.`);
+  }
+  if (changed && !ctx.dry) await store(ctx, { op: 'put', k: 'limWarn', v: warn });
+}
 async function onFm(ctx, cfg, k, v, mid, st) {
   await gone(ctx, mid); await putSt(ctx, {});
   if (k === 'fp') return fmScreen(ctx);
@@ -1773,6 +1789,7 @@ async function onCallback(ctx, q, again) {
         m[did] = { id: did, name: d.dealName || 'сделка ' + did, prepay: [id], closed: false, at: Date.now() }; await putDeals(ctx, m);
       }
       await edit(ctx, mid, `✅ Записано · ${id}${d.ord && !d.edit ? ' · заказ ' + d.ord : ''}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
+      if (d.type === 'Расход') { ctx.noTrack = true; await limitCheck(ctx, d).catch(() => {}); }   // лимиты 70% / 100%
       ctx.keep = [mid]; ctx.noTrack = true;            // запись и расчёты после неё остаются в чате
       { const t = (await store(ctx, { op: 'get', k: 'trail' })) || []; await store(ctx, { op: 'put', k: 'trail', v: t.filter(i => i !== mid) }); ctx.trail = ctx.trail.filter(i => i !== mid); }
       // Аренда (владелец 26.11): пока не ответили «Залог взяли?» — ни расчёта с братом, ни стикера, ни меню
