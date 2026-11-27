@@ -934,6 +934,20 @@ async function onToolText(ctx, cfg, st, text) {
   }
 }
 // ежедневно в 9:00: брони, у которых наступила дата
+// день окончания аренды (задача 21, владелец 27.11): 9:00 — владельцу с кнопками, в группу и брату — один раз
+async function rentEndReminders(ctx) {
+  const m = await getOrds(ctx), today = todayYmd(); let n = 0;
+  for (const o of ordList(m)) {
+    if (!o.until || o.until !== today || o.warned === today) continue;
+    const per = o.per ? Object.values(o.per).find(p => p[1] === o.until) : null, who = (o.ps ? o.ps + ' ' : '') + o.id;
+    await send(ctx, `⏰ <b>Сегодня заканчивается аренда ${who}</b>${per ? ' (' + dm(per[0]) + '–' + dm(per[1]) + ')' : ''}\nПродлевает или сдаёт?`,
+      [[['🔄 Продлевает', 'ae:' + o.id, 'primary']], [['✅ Сдал приставку', 'ax:' + o.id, 'success']]]);
+    await rentNotify(ctx, `⏰ <b>Сегодня заканчивается аренда ${who}</b> — продлевает или сдаёт?`).catch(() => {});
+    o.warned = today; n++;
+  }
+  if (n && !ctx.dry) await store(ctx, { op: 'put', k: 'ords', v: m });
+  return n;
+}
 async function morning(env) {
   const ctx = { env, out: [] }; const cfg = await config(ctx, true);
   ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
@@ -947,6 +961,7 @@ async function morning(env) {
     if (dep) { await putSt(ctx, { tool: { kind: 'interest', card: dep.name }, await: 'tool' });
       await send(ctx, `📅 Начало месяца. Сколько сейчас на «${dep.name}»? Напишите сумму из приложения — разницу (проценты банка) прибавлю к вкладу.`); }
   }
+  try { ctx.noTrack = true; await rentEndReminders(ctx); ctx.noTrack = false; } catch (e) {}
   try { const p = await fmToday(ctx); ctx.noTrack = true; await send(ctx, '☀️ <b>Доброе утро!</b>\n' + fmLine(p), [[['📊 План', 'fp', 'primary']]]); ctx.noTrack = false; } catch (e) {}   // дневной план каждое утро
   for (const x of Object.values((await store(ctx, { op: 'get', k: 'loans' })) || {})) {   // долги мне: в день возврата
     if (x.done || !x.due || x.due > today) continue;
@@ -1344,6 +1359,7 @@ async function draftText(ctx, cfg, st, m, text) {
   if (st.await === 'until' && st.d) {
     const y = parseFuture(text);
     if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>28.11</code>.');
+    if (y <= (st.d.since || st.d.date)) return send(ctx, `Срок должен быть позже ${dm(st.d.since || st.d.date)}. Напишите другую дату.`);
     remember(st); st.d.until = y; return reshow(ctx, st);
   }
   if (st.await === 'book' && st.d) {
@@ -2186,6 +2202,13 @@ async function onCallback(ctx, q, again) {
       comment: o ? `Поступление по сделке «${o.name}»` : v === 'sup' ? 'Поддержка сайта' : 'Поступление без предоплаты' });
     return askNext(ctx, cfg, { d, queue: [], dir: 'Leadex' });
   }
+  if (k === 'ae' || k === 'ax') {                    // кнопки напоминания об окончании аренды
+    const o = (await getOrds(ctx))[v]; await gone(ctx, mid);
+    if (!o || o.closed) return send(ctx, 'Этот заказ уже закрыт.', [[BACK]]);
+    const nst = { dir: 'Аренда PS5', ord: o.id, ps: o.ps || '' }; await putSt(ctx, nst);
+    if (k === 'ae') return onCallback(ctx, { ...q, data: `ao:in|${o.id}` }, true);   // продление: сумма → новый срок
+    return rentScreen(ctx, nst);                      // сдал: залог вернуть/удержать → закрыть заказ
+  }
   if (k === 'ar') {                                  // оплата (или продление) / залог для выбранного клиента
     await gone(ctx, mid);
     if (v === 'list') { await putSt(ctx, { dir: 'Аренда PS5' }); return rentOrders(ctx); }
@@ -2253,6 +2276,7 @@ async function onCallback(ctx, q, again) {
   if (!st.d) return edit(ctx, mid, 'Эта запись уже закрыта. Нажмите /menu, чтобы начать новую.');
   if (['ty', 'g', 's', 'k', 'dt'].includes(k)) remember(st);
   const d = st.d;
+  if (k === 'un' && v <= (d.since || d.date)) return send(ctx, `Срок должен быть позже ${dm(d.since || d.date)}. Выберите другую дату.`);
   if (k === 'un') { remember(st); d.until = v; st.await = null; await gone(ctx, mid); return askNext(ctx, cfg, st); }   // срок аренды
   if (k === 'ty') { d.type = TYPES[+v]; d.group = d.cat = null; await gone(ctx, mid); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
   if (k === 'g') {
@@ -2272,6 +2296,7 @@ async function onCallback(ctx, q, again) {
     const txt = loan ? '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>Когда вернут долг?</b> Выберите дату.' : '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>Выберите дату брони</b>\nКрасные дни • — уже есть бронь.';
     return edit(ctx, mid, txt, await calendar(ctx, v, loan));
   }
+  if (k === 'cd' && d && st.await === 'until' && v <= (d.since || d.date)) return send(ctx, `Срок должен быть позже ${dm(d.since || d.date)}. Выберите другую дату.`);
   if (k === 'cd' && d) { if (st.await === 'until') { remember(st); d.until = v; st.await = null; await gone(ctx, mid); return askNext(ctx, cfg, st); }
     if (d.type === 'Дал в долг') d.due = v; else d.book = v; await gone(ctx, mid); return reshow(ctx, st); }
   if (k === 'cord' && d) { d.ord = v; await gone(ctx, mid); return askNext(ctx, cfg, st); }
@@ -2553,6 +2578,7 @@ export default {
     }
     if (u.pathname === '/ordper') { const c = { env, out: [] }, m = await getOrds(c), o = m[u.searchParams.get('id')]; if (!o) return new Response('no order');   // служебное: срок оплаты ?id=A1&r=R6&from=YYYY-MM-DD&to=YYYY-MM-DD
       (o.per = o.per || {})[u.searchParams.get('r')] = [u.searchParams.get('from'), u.searchParams.get('to')]; if (!o.closed) o.until = u.searchParams.get('to'); await putOrds(c, m); return Response.json(o); }
+    if (u.pathname === '/rentend') { const c = { env, out: [], dry: true }; c.chat = (await config(c)).owners[0]; const n = await rentEndReminders(c); return Response.json({ n, out: c.out }); }   // служебное: проверка напоминания (сухо)
     if (u.pathname === '/rentsync') { const c = { env, out: [] }; await rentSync(c, await getOrds(c)); return new Response('synced'); }   // служебное: перезаписать лист «Аренда сделки»
     if (u.pathname === '/supget') { const c = { env, out: [] }; return Response.json({ debt: await store(c, { op: 'get', k: 'supDebt' }), unknown: await store(c, { op: 'get', k: 'supUnknown' }) }); }   // служебное: посмотреть долг поставщику
     if (u.pathname === '/supset') { const c = { env, out: [] }, rub = Number(u.searchParams.get('rub')), uz = Number(u.searchParams.get('uzs')); const v = { rub, usdt: null, uzs: uz > 0 ? uz : supRound(rub * RUB_TO_UZS), at: Date.now() }; await store(c, { op: 'put', k: 'supDebt', v }); await store(c, { op: 'put', k: 'supUnknown', v: false }); return Response.json(v); }   // служебное: долг поставщику в рублях
