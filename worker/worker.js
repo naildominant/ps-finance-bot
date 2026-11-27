@@ -1391,11 +1391,16 @@ async function fmToday(ctx) {
   const { fm, over } = await getFm(ctx), nal = await nalBalance(ctx), t = todayYmd();
   const rem = Math.max(0, fm.plan - nal); let W = 0;
   for (let d = t; d <= fm.end; d = shiftYmd(d, 1)) W += fmW(d);
-  const need = rem && W ? Math.ceil(rem * fmW(t) / W / 1000) * 1000 : 0;
-  return { fm, over, nal, rem, need, pct: fm.plan ? Math.max(0, Math.min(100, Math.round(nal / fm.plan * 100))) : 0 };
+  let day = await store(ctx, { op: 'get', k: 'fmDay' });
+  if (!day || day.d !== t || day.start !== fm.start) {     // норма дня — по остатку на утро, весь день не меняется
+    day = { d: t, start: fm.start, nal0: nal, need: rem && W ? Math.ceil(rem * fmW(t) / W / 1000) * 1000 : 0 };
+    await store(ctx, { op: 'put', k: 'fmDay', v: day });
+  }
+  const done = Math.max(0, nal - day.nal0), need = day.need;
+  return { fm, over, nal, rem, need, done, pct: fm.plan ? Math.max(0, Math.min(100, Math.round(nal / fm.plan * 100))) : 0 };
 }
 const fmLine = s => s.over ? `📊 Финмесяц закончился — нажмите «Разбор месяца»`
-  : s.rem ? `📊 План до ${dm(s.fm.due)}: ${gShort(s.nal)} из ${gShort(s.fm.plan)} (${s.pct}%) · сегодня ${gShort(s.need)}`
+  : s.rem ? `📊 План до ${dm(s.fm.due)}: ${gShort(s.nal)} из ${gShort(s.fm.plan)} (${s.pct}%)\n${s.done >= s.need ? '✅ Сегодня норма есть' : `🎯 Сегодня отложить: ${gShort(s.need)}` + (s.done ? ` (уже ${gShort(s.done)})` : '')}`
   : `📊 План до ${dm(s.fm.due)} закрыт ✅ ${gShort(s.nal)} из ${gShort(s.fm.plan)}`;
 async function fmScreen(ctx) {
   const s = await fmToday(ctx), f = s.fm, L = [];
@@ -1403,7 +1408,8 @@ async function fmScreen(ctx) {
   L.push(`💰 Собрано (Нал): <b>${fmt(s.nal)}</b> из ${fmt(f.plan)} (${s.pct}%)`);
   if (s.over) L.push('⏳ Месяц закончился — пора на разбор.');
   else if (s.rem) { const days = Math.round((Date.parse(f.end) - Date.parse(todayYmd())) / DAY) + 1;
-    L.push(`Осталось: ${fmt(s.rem)} · дней: ${days}`, `🎯 <b>Сегодня нужно: ${fmt(s.need)}</b> (день ×${String(fmW(todayYmd())).replace('.', ',')})`); }
+    L.push(`Осталось: ${fmt(s.rem)} · дней: ${days}`, `🎯 <b>Сегодня отложить в Нал: ${fmt(s.need)}</b> (день ×${String(fmW(todayYmd())).replace('.', ',')})` + (s.done ? `\nСегодня уже: ${fmt(s.done)}${s.done >= s.need ? ' ✅' : ''}` : ''),
+      'Не отложили — остаток сам разложится на следующие дни.', 'Доллары в план не входят.'); }
   else L.push('✅ <b>План закрыт!</b>');
   L.push('', `<b>Расходы на месяц</b> (${f.src === 'факт' ? 'по факту прошлого месяца' : 'по опросу'}): ${fmt(f.exp.reduce((a, e) => a + e[1], 0))}`);
   for (const [n, v] of f.exp) L.push(`   ${esc(n)} — ${fmt(v)}`);
