@@ -904,6 +904,10 @@ function draftFrom(cfg, dir, p, text, single) {
   fixType(d);
   if (d.type === 'Предоплата' && p.book) { d.book = parseDate(p.book); if (d.date === d.book) d.date = todayYmd(); }  // дата операции ≠ дата брони
   if (d.amount == null && single) { const a = parseAmount((text.match(/\$?\d[\d\s.,]*\s*(к|тыс|млн|\$)?/i) || [''])[0]); if (a && a.amount) { d.amount = a.amount; if (a.cur) d.cur = a.cur; } }
+  {   // ИИ иногда ошибается в сумме («-400 к» → 40 000): если в куске одно число — верим ему (владелец 27.11)
+    const nums = piece.match(/\d[\d\s.,]*\s*(к|k|тыс[а-я]*|млн|лям[а-я]*|\$)?/gi) || [];
+    if (nums.length === 1) { const a = parseAmount(nums[0].trim()); if (a && a.amount && a.amount !== d.amount && !/^\d{1,2}[.\/]\d{1,2}/.test(nums[0])) { d.amount = a.amount; if (a.cur) d.cur = a.cur; } }
+  }
   if (d.type && d.dir && needsCat(d.type)) detectCat(cfg, d, piece, p.category);
   const ok = c => c && (isIn(d.type) ? c.inc.includes(d.dir) : isOut(d.type) ? c.exp.includes(d.dir) : true) ? c.name : null;
   let cf = matchCard(cfg, p.card_from), ct = matchCard(cfg, p.card_to);
