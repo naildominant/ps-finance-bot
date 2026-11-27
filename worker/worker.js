@@ -514,10 +514,11 @@ async function onTool(ctx, q) {
     const rows = [...ORDER.map(([w, t, h]) => { const r = all.find(r => String(r[0]).startsWith(w)); return r && { r, t, h }; }).filter(Boolean),
       ...all.filter(r => !ORDER.some(([w]) => String(r[0]).startsWith(w))).map(r => ({ r, t: r[0] }))];
     let tot = 0, alien = 0, n = 0; const L = ['<b>💳 Баланс по картам</b>', ''];
+    const fond = ((await getGoals(ctx)).cush || {}).total || 0;   // доллары: 🔒 ФОНД (подушка) + отложено (владелец 27.11)
     for (const { r, t, h } of rows) {
       if (h) L.push(h === '—' ? '┈┈┈┈┈┈┈┈┈┈' : h, '');
       const v = Number(r[8]) || 0, j = Number(r[9]) || 0, usd = r[2] === '$';
-      L.push(`${++n}. <b>${esc(t)}</b>\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}` + (t === 'ВКЛАД' ? `\n      🎯 цель ${fmt(GOAL_SUM)} к ${GOAL_DATE}: ${Math.round(v / GOAL_SUM * 100)}%, осталось ${fmt(Math.max(0, GOAL_SUM - v))}` : ''), '');
+      L.push(`${++n}. <b>${esc(t)}</b>\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}` + (t === 'ДОЛЛАРЫ' ? `\n      🔒 ФОНД: <b>$${fmt(Math.min(fond, v))}</b>\n      💼 Отложено: <b>$${fmt(Math.max(0, v - fond))}</b>` : '') + (t === 'ВКЛАД' ? `\n      🎯 цель ${fmt(GOAL_SUM)} к ${GOAL_DATE}: ${Math.round(v / GOAL_SUM * 100)}%, осталось ${fmt(Math.max(0, GOAL_SUM - v))}` : ''), '');
       if (!usd) { tot += v; alien += j; }
     }
     L.push('━━━━━━━━━━', `Всего в сумах: <b>${fmt(tot)}</b>`); if (alien) L.push(`Из них мои: <b>${fmt(tot - alien)}</b>`);
