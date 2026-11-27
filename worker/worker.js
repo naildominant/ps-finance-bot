@@ -883,6 +883,13 @@ async function onShares(ctx, q) {
 }
 
 // ---------- Обработка ----------
+async function claudeAdd(ctx, text) {                 // /claude: записать правку владельца в очередь
+  const q = (await store(ctx, { op: 'get', k: 'claudeQ' })) || [];
+  q.push({ id: q.length + 1, at: Date.now(), text: String(text).slice(0, 3000), done: false });
+  if (!ctx.dry) await store(ctx, { op: 'put', k: 'claudeQ', v: q });
+  await putSt(ctx, {});
+  return send(ctx, `📝 <b>Правка №${q.length} записана.</b>`);   // только записать (владелец 27.11)
+}
 async function onMessage(ctx, m) {
   const cfg = await config(ctx);
   const text = (m.text || '').trim();
@@ -904,6 +911,7 @@ async function onMessage(ctx, m) {
     }
     return startScreen(ctx);
   }
+  if (st.await === 'claude' && text && !/^\/(start|menu)$/i.test(text)) return claudeAdd(ctx, text);   // правка — раньше всех проверок («главное меню» в тексте правки не уводит в меню)
   if (/^\/menu$/i.test(text) || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
   if (/^\/(claude|clone|клод)(@\w+)?$/i.test(text)) { await putSt(ctx, { await: 'claude', g: {} });
     return send(ctx, '🎧 <b>Слушаю.</b> Напишите или скажите голосом правку — я её запишу.'); }
@@ -939,13 +947,6 @@ async function onMessage(ctx, m) {
   { const r = text.match(/^(?:долг\s*(?:поставщику)?\s*)?([\d\s.,]+)\s*(?:руб[а-я.]*|₽|rub)$/i);   // «4607 руб», «долг 4 607,72 ₽»
     if (r || (st.await === 'tool' && st.tool && st.tool.kind === 'hps' && num(text) > 0)) return setSupDebt(ctx, { rub: num(r ? r[1] : text), usdt: null }); }
   if (st.await === 'tool' && st.tool) return onToolText(ctx, cfg, st, text);
-  if (st.await === 'claude' && text) {                  // правка для Claude: в очередь, Claude читает её в своём чате
-    const q = (await store(ctx, { op: 'get', k: 'claudeQ' })) || [];
-    q.push({ id: q.length + 1, at: Date.now(), text: text.slice(0, 2000), done: false });
-    if (!ctx.dry) await store(ctx, { op: 'put', k: 'claudeQ', v: q });
-    await putSt(ctx, {});
-    return send(ctx, `📝 <b>Правка №${q.length} записана.</b>`);   // только записать (владелец 27.11)
-  }
   if (st.g && st.await === 'fmsum') return fmSetPlan(ctx, text);
   if (st.g && ['gsum', 'gname', 'gamt', 'gdate'].includes(st.await)) return onGoalText(ctx, cfg, st, text);
   if (/закрыл[а-я]*\s+(оплат|поставщ)/i.test(text)) return closeSupplier(ctx, cfg);
@@ -2143,6 +2144,7 @@ export default {
       return Response.json(q);
     }
     if (u.pathname === '/supset') { const c = { env, out: [] }, rub = Number(u.searchParams.get('rub')); const v = { rub, usdt: null, uzs: Math.round(rub * RUB_TO_UZS), at: Date.now() }; await store(c, { op: 'put', k: 'supDebt', v }); await store(c, { op: 'put', k: 'supUnknown', v: false }); return Response.json(v); }   // служебное: долг поставщику в рублях
+    if (u.pathname === '/claudevoice') { const c = { env, out: [] }; const said = await transcribe(c, await tgFile(c, u.searchParams.get('fid'))); const q = (await store(c, { op: 'get', k: 'claudeQ' })) || []; if (said) { q.push({ id: q.length + 1, at: Date.now(), text: said, done: false }); await store(c, { op: 'put', k: 'claudeQ', v: q }); } return Response.json({ said }); }
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
     return new Response('ok');
   },
