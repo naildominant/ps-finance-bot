@@ -514,7 +514,7 @@ async function onTool(ctx, q) {
     const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
     // порядок и подписи (владелец 26.11); карту брата не показываем — её смотрит брат
     const ORDER = [['Приёмка', 'ГЛАВНАЯ', '⭐ <b>Основные</b>'], ['Apple Pay', 'APPLE PAY'], ['Поставщик', 'ПОСТАВЩИК', '—'], ['Капитал', 'АРЕНДНАЯ'], ['Нал', 'НАЛ', '—'],
-      ['Булка', 'BULKA CARD'], ['Расходка', 'PSРАСХОДЫ'], ['Ипак', 'ИПАК'], ['Доллары', 'ДОЛЛАРЫ', '—'], ['UZUM вклад', 'ВКЛАД']];
+      ['Расходка', 'PSРАСХОДЫ'], ['Ипак', 'ИПАК'], ['Доллары', 'ДОЛЛАРЫ', '—'], ['UZUM вклад', 'ВКЛАД'], ['Булка', 'BULKA CARD']];   // Булка — накопительная, в конце (владелец 27.11, /claude №5)
     const all = g.values.filter(r => r[0] && r[2] && !/^Арс/.test(r[0]));
     const rows = [...ORDER.map(([w, t, h]) => { const r = all.find(r => String(r[0]).startsWith(w)); return r && { r, t, h }; }).filter(Boolean),
       ...all.filter(r => !ORDER.some(([w]) => String(r[0]).startsWith(w))).map(r => ({ r, t: r[0] }))];
