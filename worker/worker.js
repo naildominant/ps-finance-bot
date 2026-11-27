@@ -305,6 +305,8 @@ function cardInText(cfg, text) {
   if (/\s(доллар|бакс|\$)/.test(t) && /налич|нал\b|кэш/.test(t)) return cfg.cards.find(c => c.name === 'Доллары') || null;
   if (/налич|\sнал(ом)?[\s.,!]|кэш/.test(t)) return cfg.cards.find(c => c.name === 'Нал') || null;
   if (/вклад/.test(t)) { const v = cfg.cards.find(c => /вклад/i.test(c.name)); if (v) return v; }
+  { const A = [[/главн/, 'Приёмка'], [/арендн/, 'Капитал'], [/ps\s*расход|пс\s*расход/, 'Расходка']];   // названия как в «Балансе» (владелец 27.11)
+    for (const [re, w] of A) if (re.test(t)) { const v = cfg.cards.find(c => c.name.startsWith(w)); if (v) return v; } }
   if (/булк/.test(t)) { const v = cfg.cards.find(c => /^Булка/.test(c.name)); if (v) return v; }
   if (/(apple|эпл|эппл|эйпл)|\sузум/.test(t)) return cfg.cards.find(c => c.name === 'Apple Pay') || null;   // карта «Узум 9028» = Apple Pay (владелец 27.11)
   return cfg.cards.find(c => { const short = c.name.toLowerCase().split(' (')[0].replace(/ё/g, 'е'), dig = (c.name.match(/\d{4}/) || [])[0];
@@ -341,8 +343,9 @@ function summary(d) {
   L.push(`🔄 ${d.type || '—'}`);
   L.push(`💰 ${d.amount != null ? (d.cur === '$' ? '$' + d.amount : fmt(d.amount) + ' сум') : '—'}`);
   if (needsCat(d.type)) L.push(`🏷 ${d.cat ? (d.group === d.cat || String(d.cat).startsWith(d.group) ? d.cat : d.group + ' / ' + d.cat) : '—'}`);
-  if (d.type === 'Между своими') L.push(`💳 ${d.from || '—'} → ${d.to || '—'}`);
-  else L.push(`💳 ${(isOut(d.type) ? d.from : d.to) || '—'}`);
+  const cl = n => n ? cardLabel({ name: n }) : '—';   // показываем как в «Балансе», в таблицу пишется прежнее имя
+  if (d.type === 'Между своими') L.push(`💳 ${cl(d.from)} → ${cl(d.to)}`);
+  else L.push(`💳 ${cl(isOut(d.type) ? d.from : d.to)}`);
   if (d.type === 'Предоплата') L.push(d.dir === 'Leadex' ? `🤝 Сделка: ${esc(d.dealName || '—')}` : `🗓 Бронь на ${d.book ? human(d.book) : '—'}`);
   if (d.type === 'Предоплата' || d.type === 'Залог') L.push('ℹ️ Чужие деньги: в доход не идут, пока не закроете');
   if (d.type === 'Дал в долг') L.push(`🤝 Кому: ${esc(d.whom || '—')}`, `🗓 Вернут: ${d.due ? human(d.due) : '—'}`, 'ℹ️ Не расход: деньги вернутся');
@@ -409,14 +412,12 @@ async function askCard(ctx, cfg, st, side, q) {
   st.await = null; st.side = side; await putSt(ctx, st);
   const d = st.d, list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) =>
     isIn(d.type) ? c.inc.includes(d.dir) : isOut(d.type) ? c.exp.includes(d.dir) : true);
-  let L = list.length ? list : cfg.cards.map((c, i) => ({ c, i }));
-  if (d.type === 'Между своими') {                   // перевод: названия как в «Балансе» и тот же порядок (владелец 27.11)
-    const pos = c => TR_NAMES.findIndex(([k]) => c.name.startsWith(k)), nm = c => (TR_NAMES[pos(c)] || [])[1] || c.name;
-    L = L.slice().sort((a, b) => ((pos(a.c) + 1) || 99) - ((pos(b.c) + 1) || 99));
-    return void await send(ctx, q, withBack(chunk(L.map(({ c, i }) => [nm(c), 'k:' + i]), 2)));
-  }
-  await send(ctx, q, withBack(chunk(L.map(({ c, i }) => [c.name, 'k:' + i]), 2)));
+  const L = cardSort(list.length ? list : cfg.cards.map((c, i) => ({ c, i })));   // названия как в «Балансе» и тот же порядок — везде (владелец 27.11)
+  await send(ctx, q, withBack(chunk(L.map(({ c, i }) => [cardLabel(c), 'k:' + i]), 2)));
 }
+const cardPos = c => TR_NAMES.findIndex(([k]) => String(c.name).startsWith(k));
+const cardLabel = c => (TR_NAMES[cardPos(c)] || [])[1] || c.name;
+const cardSort = L => L.slice().sort((a, b) => ((cardPos(a.c) + 1) || 99) - ((cardPos(b.c) + 1) || 99));
 const TR_NAMES = [['Приёмка', '⭐ ГЛАВНАЯ'], ['Apple Pay', '🍏 APPLE PAY'], ['Поставщик', '📦 ПОСТАВЩИК'], ['Капитал', '🎮 АРЕНДНАЯ'], ['Нал', '💵 НАЛ'],
   ['Расходка', '🧾 PSРАСХОДЫ'], ['Ипак', '💳 ИПАК'], ['Доллары', '💲 ДОЛЛАРЫ'], ['UZUM вклад', '🏦 ВКЛАД'], ['Булка', '🥖 BULKA CARD'], ['Арс', '👤 АРС (карта брата)']];
 const chunk = (a, n) => a.reduce((r, x, i) => (i % n ? r[r.length - 1].push(x) : r.push([x]), r), []);
@@ -702,7 +703,7 @@ async function onToolText(ctx, cfg, st, text) {
     if (!a.amount) return finishPrepay(ctx, cfg, x, 0, null);
     const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.inc.includes(x.dir));
     await putSt(ctx, {});
-    return send(ctx, `💳 Куда пришла доплата ${fmt(a.amount)}?`, chunk(list.map(({ c, i }) => [c.name, `pk:${x.id}|${i}|${a.amount}`]), 2));
+    return send(ctx, `💳 Куда пришла доплата ${fmt(a.amount)}?`, chunk(cardSort(list).map(({ c, i }) => [cardLabel(c), `pk:${x.id}|${i}|${a.amount}`]), 2));
   }
 }
 // ежедневно в 9:00: брони, у которых наступила дата
@@ -776,7 +777,7 @@ async function onLeadex(ctx, q) {
   if (k === 'lxin') {                                     // вложение недостающей суммы: с какой карты
     if (!x.short) return edit(ctx, mid, 'Вложение уже записано.');
     const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.cur === 'сум');
-    return send(ctx, `С какой карты вложили ${fmt(x.short)} в LEADEX?`, [...chunk(list.map(({ c, i }) => [c.name, `lxif:${id}|${i}`]), 2), [['Только записать', `lxif:${id}|-`]]]);
+    return send(ctx, `С какой карты вложили ${fmt(x.short)} в LEADEX?`, [...chunk(cardSort(list).map(({ c, i }) => [cardLabel(c), `lxif:${id}|${i}`]), 2), [['Только записать', `lxif:${id}|-`]]]);
   }
   if (k === 'lxno') { await unkb(ctx, mid); await send(ctx, 'Хорошо, позже. Расчёт остаётся выше.', [[['✅ Перевёл', 'lxok:' + id]]]); await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx); }
   if (x.done) return edit(ctx, mid, 'Уже отмечено.');
@@ -947,7 +948,7 @@ async function onShares(ctx, q) {
     const amt = k === 'rsv' ? ((await store(ctx, { op: 'get', k: 'res:' + id })) || {}).amount : ((await store(ctx, { op: 'get', k: 'bro' })) || {}).amount;
     if (!amt || !tgt) return edit(ctx, mid, 'Сумма не найдена или уже записана.');
     const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.name !== tgt.name && c.cur === 'сум');
-    return edit(ctx, mid, `С какой карты перевели ${fmt(amt)} на «${tgt.name}»?`, chunk(list.map(({ c, i }) => [c.name, `${k}f:${id}|${i}`]), 2));
+    return edit(ctx, mid, `С какой карты перевели ${fmt(amt)} на «${tgt.name}»?`, chunk(cardSort(list).map(({ c, i }) => [cardLabel(c), `${k}f:${id}|${i}`]), 2));
   }
   if (k === 'rsvf' || k === 'brof') {
     const [iid, ci] = id.split('|'); const src = cfg.cards[+ci];
@@ -1536,7 +1537,7 @@ async function onGoalText(ctx, cfg, st, text) {           // ответы тек
     if (a.cur === '$' && cur !== '$') amt = Math.round(amt * await cbuRate(ctx, todayYmd()));   // $ на цель в сумах — по курсу ЦБ
     st.g.amt = amt; st.await = null; await putSt(ctx, st);
     const own = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.exp.includes('Личное') || c.inc.includes('Личное') || /вклад/i.test(c.name));   // карты Личного + вклад
-    return send(ctx, '💳 Куда положили?', [...chunk((own.length ? own : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [c.name, 'gk:' + i]), 2), [['↩️ Назад', 'gl:' + st.g.id]]]);
+    return send(ctx, '💳 Куда положили?', [...chunk(cardSort(own.length ? own : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [cardLabel(c), 'gk:' + i]), 2), [['↩️ Назад', 'gl:' + st.g.id]]]);
   }
   if (st.await === 'gname') {
     st.g.nw.name = text.slice(0, 30); st.await = 'gamt'; await putSt(ctx, st);
