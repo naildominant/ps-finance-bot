@@ -856,6 +856,8 @@ async function onMessage(ctx, m) {
     return startScreen(ctx);
   }
   if (/^\/menu$/i.test(text) || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
+  if (/^\/(claude|clone|клод)(@\w+)?$/i.test(text)) { await putSt(ctx, { await: 'claude', g: {} });
+    return send(ctx, '🎧 <b>Слушаю запрос.</b> Напишите или скажите голосом, что изменить в боте.'); }
   if (m.voice || m.audio || m.video_note) {
     const f = m.voice || m.audio || m.video_note;
     const said = await transcribe(ctx, await tgFile(ctx, f.file_id));
@@ -888,6 +890,13 @@ async function onMessage(ctx, m) {
   { const r = text.match(/^(?:долг\s*(?:поставщику)?\s*)?([\d\s.,]+)\s*(?:руб[а-я.]*|₽|rub)$/i);   // «4607 руб», «долг 4 607,72 ₽»
     if (r || (st.await === 'tool' && st.tool && st.tool.kind === 'hps' && num(text) > 0)) return setSupDebt(ctx, { rub: num(r ? r[1] : text), usdt: null }); }
   if (st.await === 'tool' && st.tool) return onToolText(ctx, cfg, st, text);
+  if (st.await === 'claude' && text) {                  // правка для Claude: в очередь, Claude читает её в своём чате
+    const q = (await store(ctx, { op: 'get', k: 'claudeQ' })) || [];
+    q.push({ id: q.length + 1, at: Date.now(), text: text.slice(0, 2000), done: false });
+    if (!ctx.dry) await store(ctx, { op: 'put', k: 'claudeQ', v: q });
+    await putSt(ctx, {});
+    return send(ctx, `📝 <b>Запрос №${q.length} принят.</b>\nClaude внесёт правку и напишет здесь, когда будет готово.`);
+  }
   if (st.g && st.await === 'fmsum') return fmSetPlan(ctx, text);
   if (st.g && ['gsum', 'gname', 'gamt', 'gdate'].includes(st.await)) return onGoalText(ctx, cfg, st, text);
   if (/закрыл[а-я]*\s+(оплат|поставщ)/i.test(text)) return closeSupplier(ctx, cfg);
@@ -2066,6 +2075,12 @@ export default {
       g.cush.card = 'Доллары'; await putGoals(ctx, g); return Response.json(g.cush);
     }
     if (u.pathname === '/rentinv') { const c = { env, dry: !!u.searchParams.get('dry') }; const v = { usd: Number(u.searchParams.get('usd')), switched: false }; await store(c, { op: 'put', k: 'rentInv', v }); return Response.json(v); }   // вложения брата в аренду, $
+    if (u.pathname === '/claudeq') {                         // служебное: очередь правок владельца (?done=N — отметить сделанной, ?msg=текст — написать владельцу)
+      const ctx = { env, out: [] }, q = (await store(ctx, { op: 'get', k: 'claudeQ' })) || [];
+      const dn = Number(u.searchParams.get('done')); if (dn) { const x = q.find(x => x.id === dn); if (x) x.done = true; await store(ctx, { op: 'put', k: 'claudeQ', v: q }); }
+      const msg = u.searchParams.get('msg'); if (msg) { const cfg = await config(ctx); ctx.chat = cfg.owners[0]; ctx.noTrack = true; await send(ctx, msg); }
+      return Response.json(q);
+    }
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
     return new Response('ok');
   },
