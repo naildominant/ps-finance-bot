@@ -42,6 +42,7 @@ const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data, style])
   if (style || STYLE[text]) b.style = style || STYLE[text];
   return /^https?:/.test(data) ? { ...b, url: data } : { ...b, callback_data: data }; })) });
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU/edit';
+const RENT_URL = 'https://docs.google.com/spreadsheets/d/1G9NgWFPksCyinTU7_QARySUJwyEFzW6cJdNRxb3xIKo/edit';   // «PS Аренда» — только аренда, брату (владелец 27.11)
 const send = async (ctx, text, rows) => {
   if (ctx.viewer && rows) rows = rows.map(r => r.map(([t, d, st]) => [t, /^(d:\d|bk|st0|menu)$/.test(d || '') ? 'vm' : d, st]));   // брат: назад → меню аренды
   if (ctx.editMid) {                                       // «Назад»: экран меняется на месте, без анимации удаления (владелец 26.11)
@@ -796,7 +797,7 @@ async function onLeadex(ctx, q) {
 // ---------- Журнал целиком (для расчётов долей) ----------
 async function journal(ctx) {
   const [j] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: 'A2:P3000' }]);
-  return j.values.filter(r => r[0] && r[12] !== 'удалено').map(r => ({ id: r[0], t: r[1] && r[1].d || 0, dir: r[3], type: r[4], group: r[5], cat: r[6], uzs: Number(r[7]) || 0, from: r[10], to: r[11] }));
+  return j.values.filter(r => r[0] && r[12] !== 'удалено').map(r => ({ id: r[0], t: r[1] && r[1].d || 0, dir: r[3], type: r[4], group: r[5], cat: r[6], uzs: Number(r[7]) || 0, from: r[10], to: r[11], ord: r[15] || '' }));
 }
 const cardByWord = (cfg, w) => cfg.cards.find(c => c.name.toLowerCase().startsWith(w.toLowerCase()));
 
@@ -926,7 +927,7 @@ async function viewerScreen(ctx, data, cfg) {          // меню брата: �
   const o = await rentOwe(ctx, cfg);
   return send(ctx, ['🎮 <b>АРЕНДА PS5</b>', '', `💵 Доходы: <b>${fmt(o.inc)}</b>`, `💸 Расходы: <b>${fmt(o.exp)}</b>`, `📈 Прибыль: <b>${fmt(o.profit)}</b>`, '',
     `💪 Ваша доля: ${fmt(o.owe)}`, `Переведено вам: ${fmt(o.paid)}`, o.due > 0 ? `К переводу вам: <b>${fmt(o.due)}</b>` : '✅ Всё переведено'].join('\n'),
-    [[['📋 Сделки', 'vo', 'primary']], [['📈 Доходы', 'vi'], ['📉 Расходы', 've']], [['💼 Вложения', 'vv']]]);
+    [[['📋 Сделки', 'vo', 'primary']], [['📈 Доходы', 'vi'], ['📉 Расходы', 've']], [['💼 Вложения', 'vv'], ['📄 Таблица', RENT_URL]]]);
 }
 async function rentShare(ctx, cfg) {
   ctx.noTrack = true;
@@ -1188,7 +1189,21 @@ async function getOrds(ctx) {
   }
   return m;
 }
-const putOrds = (ctx, m) => store(ctx, { op: 'put', k: 'ords', v: m });
+const putOrds = async (ctx, m) => { const r = await store(ctx, { op: 'put', k: 'ords', v: m }); await rentSync(ctx, m).catch(() => {}); return r; };
+// лист «Аренда сделки» в главной таблице — его показывает таблица «PS Аренда» (IMPORTRANGE) брату (владелец 27.11)
+async function rentSync(ctx, m) {
+  if (ctx.dry) return;
+  const items = await openItems(ctx), J = await journal(ctx);
+  const d = t => t ? { d: t } : '';
+  const os = Object.keys(m).filter(k => k !== '_n').map(k => m[k]).sort((a, b) => (a.closed - b.closed) || (b.at - a.at));
+  const rows = os.slice(0, 299).map(o => {
+    const i = ordInfo(o, items), paid = J.filter(x => x.ord === o.id && x.dir === 'Аренда PS5' && x.type === 'Доход').reduce((a, x) => a + x.uzs, 0);
+    const st = o.closed ? 'закрыт' : o.paid ? 'идёт' : o.book ? 'бронь' : 'новый';
+    return [o.id, o.ps || '', st, d(o.at), o.book ? d(Date.parse(o.book)) : '', o.until ? d(Date.parse(o.until)) : '', paid, i.sp, i.sz];
+  });
+  while (rows.length < 299) rows.push(['', '', '', '', '', '', '', '', '']);
+  await gas(ctx, [{ op: 'set', sheet: 'Аренда сделки', range: 'A2:I300', values: rows }]);
+}
 const ordList = m => Object.keys(m).filter(k => k !== '_n' && !m[k].closed).map(k => m[k]);
 const ordOf = (m, itemId) => ordList(m).find(o => o.prepay.includes(itemId) || o.zalog.includes(itemId));
 function ordInfo(o, items) {
@@ -1308,7 +1323,7 @@ async function rentStart(ctx) {
   const m = await getOrds(ctx), items = await openItems(ctx), os = ordList(m);
   const rows = os.map(o => [[ordInfo(o, items).label, 'ro:' + o.id]]);
   rows.push([['🆕 Новый клиент', 'ro:new', 'success']]);
-  rows.push([['−', 'ra:exp', 'danger']], [['📉 Расходы', 'mr:out|1', 'primary']], [['💼 Вложения', 'ra:inv'], ['📄 Таблица', 'ra:tab']], [BACK]);   // цвета — владелец 27.11 (/claude №2)   // расход аренды, сводка, таблица (владелец 27.11)
+  rows.push([['−', 'ra:exp', 'danger']], [['📉 Расходы', 'mr:out|1', 'primary']], [['💼 Вложения', 'ra:inv'], ['📄 Таблица', RENT_URL]], [BACK]);   // цвета — владелец 27.11 (/claude №2)   // расход аренды, сводка, таблица (владелец 27.11)
   return send(ctx, '<b>АРЕНДА: какой клиент?</b>', rows);
 }
 async function rentConsole(ctx) {                          // занятые приставки (у открытых заказов) не предлагаем
@@ -2244,6 +2259,7 @@ export default {
       const msg = u.searchParams.get('msg'); if (msg) { const cfg = await config(ctx); ctx.chat = cfg.owners[0]; ctx.noTrack = true; await send(ctx, msg); }
       return Response.json(q);
     }
+    if (u.pathname === '/rentsync') { const c = { env, out: [] }; await rentSync(c, await getOrds(c)); return new Response('synced'); }   // служебное: перезаписать лист «Аренда сделки»
     if (u.pathname === '/supget') { const c = { env, out: [] }; return Response.json({ debt: await store(c, { op: 'get', k: 'supDebt' }), unknown: await store(c, { op: 'get', k: 'supUnknown' }) }); }   // служебное: посмотреть долг поставщику
     if (u.pathname === '/supset') { const c = { env, out: [] }, rub = Number(u.searchParams.get('rub')), uz = Number(u.searchParams.get('uzs')); const v = { rub, usdt: null, uzs: uz > 0 ? uz : supRound(rub * RUB_TO_UZS), at: Date.now() }; await store(c, { op: 'put', k: 'supDebt', v }); await store(c, { op: 'put', k: 'supUnknown', v: false }); return Response.json(v); }   // служебное: долг поставщику в рублях
     if (u.pathname === '/claudevoice') { const c = { env, out: [] }; const said = await transcribe(c, await tgFile(c, u.searchParams.get('fid'))); const q = (await store(c, { op: 'get', k: 'claudeQ' })) || []; if (said) { q.push({ id: q.length + 1, at: Date.now(), text: said, done: false }); await store(c, { op: 'put', k: 'claudeQ', v: q }); } return Response.json({ said }); }
