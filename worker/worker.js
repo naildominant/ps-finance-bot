@@ -2142,6 +2142,7 @@ export default {
       const msg = u.searchParams.get('msg'); if (msg) { const cfg = await config(ctx); ctx.chat = cfg.owners[0]; ctx.noTrack = true; await send(ctx, msg); }
       return Response.json(q);
     }
+    if (u.pathname === '/supset') { const c = { env, out: [] }, rub = Number(u.searchParams.get('rub')); const v = { rub, usdt: null, uzs: Math.round(rub * RUB_TO_UZS), at: Date.now() }; await store(c, { op: 'put', k: 'supDebt', v }); await store(c, { op: 'put', k: 'supUnknown', v: false }); return Response.json(v); }   // служебное: долг поставщику в рублях
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
     return new Response('ok');
   },
