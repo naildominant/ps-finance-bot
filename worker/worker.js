@@ -43,6 +43,7 @@ const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data, style])
   return /^https?:/.test(data) ? { ...b, url: data } : { ...b, callback_data: data }; })) });
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU/edit';
 const send = async (ctx, text, rows) => {
+  if (ctx.viewer && rows) rows = rows.map(r => r.map(([t, d, st]) => [t, /^(d:\d|bk|st0|menu)$/.test(d || '') ? 'vm' : d, st]));   // брат: назад → меню аренды
   if (ctx.editMid) {                                       // «Назад»: экран меняется на месте, без анимации удаления (владелец 26.11)
     const mid = ctx.editMid; ctx.editMid = null;
     const e = await tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: mid, text: premium(text), parse_mode: 'HTML', reply_markup: kb(rows || []) });
@@ -92,6 +93,7 @@ async function config(ctx, force) {
     cards: cards.values.filter(r => r[0] && r[2]).map(r => ({ name: String(r[0]), cur: r[2],
       inc: String(r[10] || '').split(',').map(x => x.trim()).filter(Boolean), exp: String(r[11] || '').split(',').map(x => x.trim()).filter(Boolean) })),
     owners: sets.values.filter(r => /Telegram ID: Наиль/.test(r[0])).map(r => String(r[1])).filter(Boolean),
+    viewers: sets.values.filter(r => /Telegram ID: брат/i.test(r[0])).map(r => String(r[1])).filter(Boolean),   // брат: только смотрит аренду (27.11)
   };
   await ctx.env.KV.put('cfg', JSON.stringify(c));
   return c;
@@ -464,6 +466,7 @@ async function save(ctx, cfg, d) {
   if (d.type === 'Предоплата' || d.type === 'Залог')
     ops.push({ op: 'append', sheet: 'Залоги и предоплаты', row: [id, { d: when }, d.type, d.dir, uzs, to, d.book ? { d: Date.parse(d.book) } : '', 'открыт', d.comment || '', d.ord && d.ord !== 'new' ? d.ord : ''] });
   await gas(ctx, ops);
+  if (d.dir === 'Аренда PS5' || (d.type === 'Между своими' && /^Арс/.test(d.to || ''))) await rentEvent(ctx, d, id).catch(() => {});   // → рабочая группа
   return id;
 }
 async function loadRow(ctx, id) {
@@ -777,12 +780,58 @@ async function rentInvScreen(ctx, cfg) {
   const L = ['💼 <b>Вложения брата в аренду</b>', '',
     `💰 Вложено: <b>$${fmt(s.inv.usd)}</b>`, `✅ Вернулось: <b>$${fmt(Math.min(s.back, s.inv.usd))}</b> (${fmt(s.ars)} сум на Арс)`,
     s.left > 0 ? `⏳ Осталось: <b>$${fmt(s.left)}</b> (${Math.round((s.inv.usd - s.left) / s.inv.usd * 100)}%)` : '🎉 Вернулось полностью', '',
-    s.inv.switched ? 'Доли сейчас: <b>вам 60%</b>, брату 40%.' : 'Доли сейчас: брату 60%, вам 40%.\nПосле возврата: <b>вам 60%</b>, брату 40%.'];
+    ctx.viewer ? (s.inv.switched ? 'Доли сейчас: Наилю 60%, <b>вам 40%</b>.' : 'Доли сейчас: <b>вам 60%</b>, Наилю 40%.\nПосле возврата вложений: Наилю 60%, вам 40%.')
+      : s.inv.switched ? 'Доли сейчас: <b>вам 60%</b>, брату 40%.' : 'Доли сейчас: брату 60%, вам 40%.\nПосле возврата: <b>вам 60%</b>, брату 40%.'];
   { const J = await journal(ctx), ars = cardByWord(cfg, 'Арс');
     const inc = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Доход').reduce((a, x) => a + x.uzs, 0), exp = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Расход').reduce((a, x) => a + x.uzs, 0);
     const paid = ars ? J.filter(x => x.type === 'Между своими' && x.to === ars.name).reduce((a, x) => a + x.uzs, 0) : 0, owe = Math.round(rentSplit(s.inv, inc - exp).bro);
-    L.push('', '👤 <b>Брату по аренде</b> (с 26.11)', `Прибыль: ${fmt(inc - exp)}`, `Положено брату: ${fmt(owe)}`, `Отдано: ${fmt(paid)}`, owe - paid > 0 ? `❗ Должен брату: <b>${fmt(owe - paid)}</b>` : '✅ Брату ничего не должен'); }
+    L.push('', ctx.viewer ? '💪 <b>Ваша доля по аренде</b> (с 26.11)' : '👤 <b>Брату по аренде</b> (с 26.11)', `Прибыль: ${fmt(inc - exp)}`, `${ctx.viewer ? 'Положено вам' : 'Положено брату'}: ${fmt(owe)}`, `${ctx.viewer ? 'Переведено вам' : 'Отдано'}: ${fmt(paid)}`,
+      owe - paid > 0 ? (ctx.viewer ? `⏳ К переводу вам: <b>${fmt(owe - paid)}</b>` : `❗ Должен брату: <b>${fmt(owe - paid)}</b>`) : (ctx.viewer ? '✅ Всё переведено' : '✅ Брату ничего не должен')); }
   return send(ctx, L.join('\n'), [[['↩️ Назад', 'd:1']]]);
+}
+// ---------- Брат и рабочая группа (задача по аренде, владелец 27.11) ----------
+async function rentOwe(ctx, cfg) {                     // сколько брату положено / отдано / должен
+  const J = await journal(ctx), ars = cardByWord(cfg, 'Арс');
+  const inc = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Доход').reduce((a, x) => a + x.uzs, 0), exp = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Расход').reduce((a, x) => a + x.uzs, 0);
+  const paid = ars ? J.filter(x => x.type === 'Между своими' && x.to === ars.name).reduce((a, x) => a + x.uzs, 0) : 0;
+  const inv = await store(ctx, { op: 'get', k: 'rentInv' }), owe = Math.round(rentSplit(inv, inc - exp).bro);
+  return { inc, exp, profit: inc - exp, owe, paid, due: owe - paid };
+}
+async function rentNotify(ctx, text) {                 // сообщение в рабочую группу с братом (если подключена)
+  if (ctx.dry) { ctx.out.push({ method: 'GROUP', text }); return; }
+  const gid = await store(ctx, { op: 'get', k: 'rentGroup' }); if (!gid) return;
+  try { const cfg = await config(ctx), o = await rentOwe(ctx, cfg);
+    text += `\n\n💪 Брату: ${o.due > 0 ? 'к переводу <b>' + fmt(o.due) + '</b>' : 'всё переведено ✅'}`; } catch (e) {}
+  await tg(ctx, 'sendMessage', { chat_id: gid, text: premium(text), parse_mode: 'HTML' }).catch(() => {});
+}
+async function rentEvent(ctx, d, id) {                 // запись по аренде → в группу
+  const money = d.cur === '$' ? '$' + fmt(d.amount) : fmt(d.amount) + ' сум', ord = d.ord && d.ord !== 'new' ? ' · заказ ' + d.ord : '';
+  const ps = d.ps ? ' ' + d.ps : '';
+  const t = d.type === 'Доход' ? `💵 <b>Оплата аренды${ps}: ${money}</b>${ord}`
+    : d.type === 'Предоплата' ? `🆕 <b>Бронь${ps}: предоплата ${money}</b>${ord}${d.book ? ' · на ' + human(d.book) : ''}`
+    : d.type === 'Залог' ? `🔐 <b>Залог взят: ${money}</b>${ord}`
+    : d.type === 'Возврат залога' ? `↩️ <b>Залог возвращён: ${money}</b>${ord}`
+    : d.type === 'Расход' ? `💸 <b>Расход аренды: ${esc(d.cat || d.group || '')} ${money}</b>`
+    : d.type === 'Между своими' && /^Арс/.test(d.to || '') ? `💪 <b>Брату переведено: ${money}</b>` : null;
+  if (t) await rentNotify(ctx, t + (d.comment && d.type !== 'Между своими' ? `\n💬 ${esc(d.comment)}` : ''));
+}
+async function viewerScreen(ctx, data, cfg) {          // меню брата: только смотреть
+  const back = [['↩️ Меню аренды', 'vm']];
+  if (data === 'vo') {
+    const m = await getOrds(ctx), items = await openItems(ctx), os = ordList(m);
+    const L = ['📋 <b>Текущие сделки</b>', ''];
+    if (!os.length) L.push('Открытых заказов нет.'); else for (const o of os) L.push('• ' + ordInfo(o, items).label);
+    const closed = Object.values(m).filter(o => o && o.closed && o.at >= Date.parse(fmBounds().start)).length;
+    L.push('', `🏁 Закрыто с ${dm(fmBounds().start)}: ${closed}`);
+    return send(ctx, L.join('\n'), [back]);
+  }
+  if (data === 'vi') return monthReport(ctx, 'in', 1);
+  if (data === 've') return monthReport(ctx, 'out', 1);
+  if (data === 'vv') return rentInvScreen(ctx, cfg);
+  const o = await rentOwe(ctx, cfg);
+  return send(ctx, ['🎮 <b>АРЕНДА PS5</b>', '', `💵 Доходы: <b>${fmt(o.inc)}</b>`, `💸 Расходы: <b>${fmt(o.exp)}</b>`, `📈 Прибыль: <b>${fmt(o.profit)}</b>`, '',
+    `💪 Ваша доля: ${fmt(o.owe)}`, `Переведено вам: ${fmt(o.paid)}`, o.due > 0 ? `К переводу вам: <b>${fmt(o.due)}</b>` : '✅ Всё переведено'].join('\n'),
+    [[['📋 Сделки', 'vo', 'primary']], [['📈 Доходы', 'vi'], ['📉 Расходы', 've']], [['💼 Вложения', 'vv']]]);
 }
 async function rentShare(ctx, cfg) {
   ctx.noTrack = true;
@@ -1077,7 +1126,7 @@ async function closeOrdIfDone(ctx, itemId) {               // заказ зак�
   const m = await getOrds(ctx); const o = ordOf(m, itemId); if (!o) return '';
   const open = (await openItems(ctx)).filter(x => o.prepay.includes(x.id) || o.zalog.includes(x.id));
   if (open.length || !o.paid) return '';
-  o.closed = true; await putOrds(ctx, m); return `\n🏁 Заказ ${o.id} закрыт.`;
+  o.closed = true; await putOrds(ctx, m); await rentNotify(ctx, `🏁 <b>Заказ ${o.ps ? o.ps + ' ' : ''}${o.id} закрыт</b> — приставку вернули.`); return `\n🏁 Заказ ${o.id} закрыт.`;
 }
 async function rentPick(ctx, kind) {                        // список открытых заказов кнопками
   const m = await getOrds(ctx), items = await openItems(ctx);
@@ -1774,7 +1823,7 @@ async function onCallback(ctx, q, again) {
     const m = await getOrds(ctx), o = m[v]; if (!o) { await gone(ctx, mid); return send(ctx, 'Заказ не найден.', [[BACK]]); }
     const open = (await openItems(ctx)).filter(x => o.prepay.includes(x.id) || o.zalog.includes(x.id));
     if (open.length) return send(ctx, `⚠️ В заказе ${o.id} ещё ${open.map(x => `${x.type.toLowerCase()} ${fmt(x.sum)}`).join(' и ')}. Сначала отметьте, что с ними: вернули клиенту, удержали или бронь сгорела. Тогда заказ закроется сам.`, [[BACK]]);
-    o.closed = true; await putOrds(ctx, m);
+    o.closed = true; await putOrds(ctx, m); await rentNotify(ctx, `🏁 <b>Заказ ${o.ps ? o.ps + ' ' : ''}${o.id} закрыт</b> — приставку вернули.`);
     await gone(ctx, mid); return send(ctx, `🏁 Заказ ${o.id} закрыт.`);
   }
   if (k === 'pa') {                                  // предоплата аренды кнопкой суммы → дальше карта и дата брони кнопками
@@ -1945,6 +1994,18 @@ async function handle(ctx, upd) {
   const from = (m && m.from) || (q && q.from); if (!from) return;
   ctx.chat = (m && m.chat.id) || (q && q.message.chat.id);
   const cfg = await config(ctx);
+  if (m && /group/.test(m.chat.type || '')) {             // рабочая группа с братом: бот только пишет туда; привязка — /group от владельца
+    if (cfg.owners.includes(String(from.id)) && /^\/(group|группа)(@\w+)?$/i.test(m.text || '')) {
+      await store(ctx, { op: 'put', k: 'rentGroup', v: m.chat.id });
+      return tg(ctx, 'sendMessage', { chat_id: m.chat.id, text: premium('✅ <b>Группа аренды подключена.</b>\nСюда буду писать: новые клиенты, оплаты, залоги, возвраты, расходы и долю брата.'), parse_mode: 'HTML' });
+    }
+    return;
+  }
+  if ((cfg.viewers || []).includes(String(from.id)) && !cfg.owners.includes(String(from.id))) {   // брат: только просмотр аренды
+    ctx.viewer = true; ctx.noTrack = true;
+    if (q) { await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id }); await gone(ctx, q.message.message_id); }
+    return viewerScreen(ctx, q ? q.data : 'vm', cfg).catch(e => send(ctx, '⚠️ Ошибка: ' + e.message));
+  }
   if (!cfg.owners.includes(String(from.id))) {          // незнакомым не отвечаем, но запоминаем
     await ctx.env.KV.put('seen:' + from.id, JSON.stringify({ id: from.id, name: [from.first_name, from.last_name].filter(Boolean).join(' '), user: from.username || '', at: Date.now() }));
     return;
