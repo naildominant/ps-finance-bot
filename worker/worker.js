@@ -662,6 +662,7 @@ async function onToolText(ctx, cfg, st, text) {
   if (!a) return send(ctx, 'Не понял число. Напишите, например, <code>150000</code>.');
   const t = st.tool;
   if (t.kind === 'sup') return supplierDone(ctx, cfg, t.card, a.amount);
+  if (t.kind === 'sut') { await putSt(ctx, {}); return supTopUp(ctx, cfg, a.amount); }
   if (t.kind === 'interest') {          // 1-е число: проценты по UZUM вкладу → доход PS SHOP
     const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
     const r = g.values.find(r => String(r[0]) === t.card); const now = Number(r && r[8]) || 0;
@@ -800,10 +801,29 @@ async function journal(ctx) {
 const cardByWord = (cfg, w) => cfg.cards.find(c => c.name.toLowerCase().startsWith(w.toLowerCase()));
 
 // ---------- PS SHOP: «закрыл оплату» → поставщик, чистая прибыль, 80/20 ----------
+// экран долга поставщику (владелец 27.11, /claude №8): долг, остаток на карте ПОСТАВЩИК, сколько докинуть с ГЛАВНОЙ (вверх до 10 000)
+async function supNums(ctx) {
+  const due = (await store(ctx, { op: 'get', k: 'supUnknown' })) ? 0 : await supDue(ctx);
+  let card = 0; try { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]); const r = g.values.find(r => String(r[0]).startsWith('Поставщик')); card = Math.round(Number(r && r[8]) || 0); } catch (e) {}
+  return { due, card, top: due > card ? supRound(due - card) : 0 };
+}
+async function supScreen(ctx) {
+  const { due, card, top } = await supNums(ctx);
+  const t = due > 0 ? `🧾 <b>Поставщику: ${fmt(due)} сум</b>\n💳 На карте ПОСТАВЩИК: <b>${fmt(card)} сум</b>\n` +
+    (top ? `👉 <b>Докинуть с основной карты: ${fmt(top)} сум</b>` : '✅ <b>На карте хватает, докидывать не нужно</b>')
+    : `🧾 <b>Поставщику есть долг</b>, сумма не записана.\n💳 На карте ПОСТАВЩИК: <b>${fmt(card)} сум</b>`;
+  return send(ctx, t, [[['💸 Перевёл на карту поставщика', 'sut', 'primary']], [['✍️ Добавить рубли', 'sp:rub']], [['✅ Поставщик списал (оплатил)', 'supd']], [['↩️ Назад', 'st0']]]);
+}
+async function supTopUp(ctx, cfg, amount) {
+  const from = cardByWord(cfg, 'Приёмка'), to = cardByWord(cfg, 'Поставщик');
+  const rid = await botRec(ctx, cfg, { dir: 'Личное', type: 'Между своими', amount, from: from.name, to: to.name, comment: 'Пополнение карты поставщика' });
+  await send(ctx, `✅ Записал перевод ${fmt(amount)}: ГЛАВНАЯ → ПОСТАВЩИК (${rid}).`, [[['🗑 Отменить', 'rm:' + rid]]]);
+  return supScreen(ctx);
+}
 async function closeSupplier(ctx, cfg) {
   const sup = cardByWord(cfg, 'Поставщик');
   await putSt(ctx, { tool: { kind: 'sup', card: sup.name }, await: 'tool' });
-  return send(ctx, `🧾 Закрыли оплату поставщику. Сколько <b>осталось</b> на «${sup.name}»? Напишите число из приложения банка.`, withBack());
+  return send(ctx, `🧾 Закрыли оплату поставщику. Сколько <b>осталось</b> на «ПОСТАВЩИК»? Напишите число из приложения банка.`, [[['↩️ Назад', 'dsup']]]);   // долг стирается только после ответа
 }
 async function supplierDone(ctx, cfg, card, left) {
   ctx.noTrack = true;
@@ -811,7 +831,8 @@ async function supplierDone(ctx, cfg, card, left) {
   const r = g.values.find(r => String(r[0]) === card); const before = Number(r && r[8]) || 0;
   const paid = Math.round(before - left);
   await putSt(ctx, {});
-  if (paid <= 0) return send(ctx, `По записям на «${card}» было ${fmt(before)}, вы пишете ${fmt(left)}. Оплаты не видно.`);
+  if (paid <= 0) return send(ctx, `По записям на «ПОСТАВЩИК» было ${fmt(before)}, вы пишете ${fmt(left)}. Оплаты не видно, долг не трогаю.`);
+  if (!ctx.dry) { await store(ctx, { op: 'put', k: 'supDebt', v: null }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); }   // долг погашен — только теперь (владелец 27.11)
   const sid = await botRec(ctx, cfg, { dir: 'PS SHOP', type: 'Расход', group: 'Поставщик', cat: 'Поставщик', amount: paid, from: card, comment: `Оплата поставщику: было ${fmt(before)}, осталось ${fmt(left)}` });
   const last = (await store(ctx, { op: 'get', k: 'psLast' })) || 0;
   const J = (await journal(ctx)).filter(x => x.t > last || x.id === sid);
@@ -1799,7 +1820,7 @@ async function onCallback(ctx, q, again) {
   }
   if (k === 'menu') { await gone(ctx, mid); return dirMenu(ctx); }
   if (k === 'ns') { await gone(ctx, mid); return onNs(ctx, cfg, st, v); }
-  if (k === 'supd') { await gone(ctx, mid); await store(ctx, { op: 'put', k: 'supDebt', v: null }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); return closeSupplier(ctx, cfg); }   // долг погашен до следующего /report
+  if (k === 'supd') { await gone(ctx, mid); return closeSupplier(ctx, cfg); }   // долг стирается в supplierDone, после ответа   // долг погашен до следующего /report
   if (k === 'sp') {                                  // после заявки PS SHOP: сколько рублей ушло поставщику
     await tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } });
     if (v === 'later') { await store(ctx, { op: 'put', k: 'supUnknown', v: true }); await putSt(ctx, {}); ctx.noTrack = true; await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx); }   // «Позже» → тоже мишка
@@ -1819,18 +1840,14 @@ async function onCallback(ctx, q, again) {
     await store(ctx, { op: 'put', k: 'bro', v: { amount: due } });
     return send(ctx, `👤 <b>Брату перевести: ${fmt(due)} сум</b>\nПеревели?`, [[['✅ Перевёл брату', 'bro:'], ['Позже', 'brol:']]]);
   }
-  if (k === 'dsup') {
-    await gone(ctx, mid); const due = (await store(ctx, { op: 'get', k: 'supUnknown' })) ? 0 : await supDue(ctx);
-    if (due > 0) {                                   // /claude №8: долг, что на карте ПОСТАВЩИК и сколько докинуть с основной (вверх до 10 000)
-      let card = 0; try { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]); const r = g.values.find(r => String(r[0]).startsWith('Поставщик')); card = Number(r && r[8]) || 0; } catch (e) {}
-      const top = due > card ? supRound(due - card) : 0;
-      return send(ctx, `🧾 <b>Поставщику: ${fmt(due)} сум</b>\n💳 На карте ПОСТАВЩИК: <b>${fmt(Math.round(card))} сум</b>\n` +
-        (top ? `👉 <b>Докинуть с основной карты: ${fmt(top)} сум</b>` : '✅ <b>На карте хватает, докидывать не нужно</b>'),
-        [[['✍️ Добавить рубли', 'sp:rub']], [['✅ Оплатил', 'supd'], ['Позже', 'st0']]]);
-    }
-    return send(ctx, due > 0 ? `🧾 <b>Поставщику скинуть: ${fmt(due)} сум</b>` : '🧾 <b>Поставщику есть долг</b>, сумма не записана.',
-      [[['✍️ Добавить рубли', 'sp:rub']], [['✅ Оплатил', 'supd'], ['Позже', 'st0']]]);
+  if (k === 'dsup') { await gone(ctx, mid); await putSt(ctx, {}); return supScreen(ctx); }
+  if (k === 'sut') {                                 // «Перевёл на карту поставщика» (владелец 27.11): сумма кнопкой или числом
+    await gone(ctx, mid); const { top } = await supNums(ctx);
+    await putSt(ctx, { tool: { kind: 'sut' }, await: 'tool' });
+    return send(ctx, '💸 <b>Сколько перевели с ГЛАВНОЙ на ПОСТАВЩИК?</b>' + (top ? '' : '\nНапишите сумму числом.'),
+      [...(top ? [[[`✅ ${fmt(top)}`, 'sutv:' + top]]] : []), [['↩️ Назад', 'dsup']]]);
   }
+  if (k === 'sutv') { await gone(ctx, mid); await putSt(ctx, {}); return supTopUp(ctx, cfg, +v); }
   if (k === 'mr') { await gone(ctx, mid); await putSt(ctx, {}); const [kind, di] = v.split('|'); return monthReport(ctx, kind, di === undefined ? null : +di); }
   if (k === 'rs') {                                  // проставить значок приставки существующему заказу
     const [oid, p] = v.split('|'); const m = await getOrds(ctx);
