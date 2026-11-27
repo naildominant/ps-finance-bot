@@ -200,32 +200,24 @@ async function readHps(ctx, bytes) {
 const OLD_ZALOG = 150000;   // залог прошлого клиента на Капитале, не записан (до бота) — пока висит пометкой в Балансе (владелец 27.11, /claude №7)
 const supRound = n => Math.ceil(n / 10000) * 10000;   // долг поставщику — всегда вверх до 10 000 (владелец 27.11: «закидываю ровную сумму»)
 // рубли за одну заявку PS SHOP → прибавить к долгу поставщику
-// долг поставщику: точный долг, что уже лежит на карте ПОСТАВЩИК и сколько закинуть — вверх до 10 000 (владелец 27.11)
-async function supCard(ctx) {
-  try { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]); const r = g.values.find(r => String(r[0]).startsWith('Поставщик')); return r ? Number(r[8]) || 0 : 0; } catch (e) { return 0; }
-}
-async function supInfo(ctx, uzs) {
-  const card = await supCard(ctx), top = uzs > card ? supRound(uzs - card) : 0;
-  return { card, top, text: `Долг поставщику: <b>${fmt(uzs)} сум</b>\nНа карте ПОСТАВЩИК: <b>${fmt(card)} сум</b>\n` +
-    (top ? `👉 <b>Закинуть на карту: ${fmt(top)} сум</b>` : '✅ <b>На карте хватает, закидывать не нужно</b>') };
-}
+// рубли × 202 → ВВЕРХ до 10 000 за каждую заявку; долг = сумма таких ровных чисел (владелец 27.11)
 async function addSupRub(ctx, rub) {
   const x = (await store(ctx, { op: 'get', k: 'supDebt' })) || { rub: 0, uzs: 0 };
-  const add = Math.round(rub * RUB_TO_UZS);
+  const add = supRound(rub * RUB_TO_UZS);
   const v = { rub: Math.round(((x.rub || 0) + rub) * 100) / 100, usdt: null, uzs: (x.uzs || 0) + add, at: Date.now() };
   if (!ctx.dry) { await store(ctx, { op: 'put', k: 'supDebt', v }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); }
   await putSt(ctx, {});
   ctx.noTrack = true;
-  await send(ctx, `🧾 Поставщику: +${fmt(add)} сум (${String(rub).replace('.', ',')} RUB × ${RUB_TO_UZS})\n` + (await supInfo(ctx, v.uzs)).text);
+  await send(ctx, `🧾 <b>Поставщику скинуть: +${fmt(add)} сум</b>\n(${String(rub).replace('.', ',')} RUB × ${RUB_TO_UZS} = ${fmt(Math.round(rub * RUB_TO_UZS))}, округлил вверх)\n<b>Долг поставщику всего: ${fmt(v.uzs)} сум</b>`);
   await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx);
 }
 // сохранить долг поставщику и показать СТАРТ
 async function setSupDebt(ctx, h) {
-  const uzs = Math.round(h.rub * RUB_TO_UZS);
+  const uzs = supRound(h.rub * RUB_TO_UZS);
   if (!ctx.dry) { await store(ctx, { op: 'put', k: 'supDebt', v: { ...h, uzs, at: Date.now() } }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); }
   await putSt(ctx, {});
   ctx.noTrack = true;
-  await send(ctx, `🧾 ${h.usdt ? String(h.usdt).replace('.', ',') + ' USDT ≈ ' : ''}${String(h.rub).replace('.', ',')} RUB × ${RUB_TO_UZS}\n` + (await supInfo(ctx, uzs)).text +
+  await send(ctx, `🧾 <b>Долг поставщику: ${fmt(uzs)} сум</b>\n${h.usdt ? String(h.usdt).replace('.', ',') + ' USDT ≈ ' : ''}${String(h.rub).replace('.', ',')} RUB × ${RUB_TO_UZS}, округлил вверх` +
     '\nОбщий долг обновлён, кнопка висит на СТАРТ.');
   ctx.noTrack = false; return startScreen(ctx);
 }
@@ -1302,9 +1294,9 @@ async function supReminder(env) {
 async function debtRows(ctx, cfg) {                         // кнопки долгов — на СТАРТ и в главном меню
   cfg = cfg || await config(ctx); const rows = [];
   const b = await rentDue(ctx, cfg); if (b > 0) rows.push([[`💪 Брат: ${fmt(b)}`, 'dbro']]);   // 💪 — выбор владельца (27.11)
-  const p = await supDue(ctx);
-  if (p > 0) { const { top } = await supInfo(ctx, p); rows.push([[top ? `🧾 Поставщику закинуть: ${fmt(top)}` : '🧾 Поставщик: на карте хватает', 'dsup']]); }
-  else if (await store(ctx, { op: 'get', k: 'supUnknown' })) rows.push([['🧾 Поставщик: долг ?', 'dsup']]);
+  const p = await supDue(ctx);   // «Позже» — только «есть долг», без суммы, пока рубли не вписаны (владелец 27.11)
+  if (await store(ctx, { op: 'get', k: 'supUnknown' })) rows.push([['🧾 Поставщик: есть долг', 'dsup']]);
+  else if (p > 0) rows.push([[`🧾 Поставщику скинуть: ${fmt(p)}`, 'dsup']]);
   return rows;
 }
 async function startScreen(ctx) {
@@ -1759,8 +1751,8 @@ async function onCallback(ctx, q, again) {
     return send(ctx, `👤 <b>Брату перевести: ${fmt(due)} сум</b>\nПеревели?`, [[['✅ Перевёл брату', 'bro:'], ['Позже', 'brol:']]]);
   }
   if (k === 'dsup') {
-    await gone(ctx, mid); const due = await supDue(ctx);
-    return send(ctx, due > 0 ? '🧾 ' + (await supInfo(ctx, due)).text : '🧾 <b>Поставщику есть долг</b>, сумма не записана.',
+    await gone(ctx, mid); const due = (await store(ctx, { op: 'get', k: 'supUnknown' })) ? 0 : await supDue(ctx);
+    return send(ctx, due > 0 ? `🧾 <b>Поставщику скинуть: ${fmt(due)} сум</b>` : '🧾 <b>Поставщику есть долг</b>, сумма не записана.',
       [[['✍️ Добавить рубли', 'sp:rub']], [['✅ Оплатил', 'supd'], ['Позже', 'st0']]]);
   }
   if (k === 'mr') { await gone(ctx, mid); await putSt(ctx, {}); const [kind, di] = v.split('|'); return monthReport(ctx, kind, di === undefined ? null : +di); }
@@ -2167,7 +2159,7 @@ export default {
       return Response.json(q);
     }
     if (u.pathname === '/supget') { const c = { env, out: [] }; return Response.json({ debt: await store(c, { op: 'get', k: 'supDebt' }), unknown: await store(c, { op: 'get', k: 'supUnknown' }) }); }   // служебное: посмотреть долг поставщику
-    if (u.pathname === '/supset') { const c = { env, out: [] }, rub = Number(u.searchParams.get('rub')); const v = { rub, usdt: null, uzs: Math.round(rub * RUB_TO_UZS), at: Date.now() }; await store(c, { op: 'put', k: 'supDebt', v }); await store(c, { op: 'put', k: 'supUnknown', v: false }); return Response.json(v); }   // служебное: долг поставщику в рублях
+    if (u.pathname === '/supset') { const c = { env, out: [] }, rub = Number(u.searchParams.get('rub')), uz = Number(u.searchParams.get('uzs')); const v = { rub, usdt: null, uzs: uz > 0 ? uz : supRound(rub * RUB_TO_UZS), at: Date.now() }; await store(c, { op: 'put', k: 'supDebt', v }); await store(c, { op: 'put', k: 'supUnknown', v: false }); return Response.json(v); }   // служебное: долг поставщику в рублях
     if (u.pathname === '/claudevoice') { const c = { env, out: [] }; const said = await transcribe(c, await tgFile(c, u.searchParams.get('fid'))); const q = (await store(c, { op: 'get', k: 'claudeQ' })) || []; if (said) { q.push({ id: q.length + 1, at: Date.now(), text: said, done: false }); await store(c, { op: 'put', k: 'claudeQ', v: q }); } return Response.json({ said }); }
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
     return new Response('ok');
