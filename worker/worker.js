@@ -1237,7 +1237,7 @@ async function goalsScreen(ctx) {
     const full = x.saved >= x.sum;
     rows.push([[`${x.name} · ${full ? 'накоплено' : gShort(x.saved, x.cur) + ' из ' + gShort(x.sum, x.cur)}`, 'gl:' + x.id, x.saved > 0 ? 'primary' : undefined]]);
   }
-  rows.push([['🆕 Новая цель', 'gn']], [['↩️ Назад', 'menu']]);
+  rows.push([['➕ Новая цель', 'gn']], [['↩️ Назад', 'menu']]);
   return send(ctx, '🎯 <b>ЦЕЛИ</b>', rows);
 }
 async function goalScreen(ctx, id) {
