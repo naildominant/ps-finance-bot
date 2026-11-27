@@ -44,6 +44,7 @@ const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data, style])
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU/edit';
 const RENT_URL = 'https://docs.google.com/spreadsheets/d/1G9NgWFPksCyinTU7_QARySUJwyEFzW6cJdNRxb3xIKo/edit';   // «PS Аренда» — только аренда, брату (владелец 27.11)
 const send = async (ctx, text, rows) => {
+  if (ctx.wife && rows) rows = rows.map(r => r.filter(([t, d]) => !/^(ed|fx:|rm:)/.test(d || '')).map(([t, d, st]) => [t, /^(d:\d|st0|menu)$/.test(d || '') ? 'wm' : d, st])).filter(r => r.length);   // жене: без правки/удаления   // жена: «Назад» → её меню
   if (ctx.viewer && rows) rows = rows.map(r => r.map(([t, d, st]) => [t, /^(d:\d|bk|st0|menu)$/.test(d || '') ? 'vm' : d, st]));   // брат: назад → меню аренды
   if (ctx.editMid) {                                       // «Назад»: экран меняется на месте, без анимации удаления (владелец 26.11)
     const mid = ctx.editMid; ctx.editMid = null;
@@ -59,6 +60,7 @@ const send = async (ctx, text, rows) => {
 const unkb = (ctx, mid) => tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } }).catch(() => {});   // убрать кнопки, сообщение оставить
 const gone = (ctx, mid) => tg(ctx, 'deleteMessage', { chat_id: ctx.chat, message_id: mid }).catch(() => {});
 async function purge(ctx) {
+  if (ctx.wife) return;                                   // у жены свой чат — общий «след» владельца не трогаем
   const ids = [...((await store(ctx, { op: 'get', k: 'trail' })) || []), ...(ctx.trail || [])].filter(i => !(ctx.keep || []).includes(i) && i !== ctx.editMid);
   if (ctx.trail) ctx.trail.length = 0;
   await store(ctx, { op: 'put', k: 'trail', v: [] });
@@ -67,6 +69,7 @@ async function purge(ctx) {
 // История видна: при нажатии кнопки старый текст сообщения не стирается, ответ дописывается снизу («👉 …»)
 const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const edit = (ctx, mid, text, rows) => {
+  if (ctx.wife && rows) rows = rows.map(r => r.filter(([t, d]) => !/^(ed|fx:|rm:)/.test(d || ''))).filter(r => r.length);   // жене: без правки/удаления
   if (ctx.orig && mid === ctx.origMid) text = esc(ctx.orig) + '\n\n👉 ' + text;
   return tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: mid, text: premium(text), parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
 };
@@ -95,6 +98,7 @@ async function config(ctx, force) {
       inc: String(r[10] || '').split(',').map(x => x.trim()).filter(Boolean), exp: String(r[11] || '').split(',').map(x => x.trim()).filter(Boolean) })),
     owners: sets.values.filter(r => /Telegram ID: Наиль/.test(r[0])).map(r => String(r[1])).filter(Boolean),
     viewers: sets.values.filter(r => /Telegram ID: брат/i.test(r[0])).map(r => String(r[1])).filter(Boolean),   // брат: только смотрит аренду (27.11)
+    wife: sets.values.filter(r => /Telegram ID: жена/i.test(r[0])).map(r => String(r[1])).filter(Boolean),   // жена: личные расходы, цели без «Сюрприза», BULKA (задача 25)
     viewersTest: sets.values.filter(r => /Telegram ID: брат \(тест\)/i.test(r[0])).map(r => String(r[1])).filter(Boolean),   // пока есть тестовый — лично пишем только ему
   };
   await ctx.env.KV.put('cfg', JSON.stringify(c));
@@ -359,6 +363,7 @@ function summary(d) {
 
 // Чего не хватает → спросить. Возвращает true, если всё заполнено.
 async function askNext(ctx, cfg, st) {
+  if (ctx.wife && st.d) { const d = st.d, b = cardByWord(cfg, 'Булка'); d.dir = 'Личное'; if (d.type !== 'Расход') { d.type = 'Расход'; } d.from = b ? b.name : d.from; d.to = null; d.edit = null; }   // жена: только траты с BULKA
   const d = st.d;
   if (!d.dir) { st.await = null; await putSt(ctx, st);
     return void await send(ctx, `К какому направлению относится: «${esc(d.comment)}»?`, withBack([[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']]])); }
@@ -455,7 +460,7 @@ const CAT_STYLE = { 'Игры PS5': 'success', 'Игры PS4': 'primary', 'GTA 6
   'OLX': 'success', 'Instagram': 'danger', 'Telegram': 'primary', 'Непредвиденные': 'danger' };
 const LOGO_STICKER = 'CAACAgEAAxkBAAIDUGsIoKXIO1jH-DR_xAZ2lhxDC9CUAAJ9AgAC3xnYRkWrScNxc61zPQQ';   // 💰 анимированный (27.11); прежнее лого: CAACAgIAAxkBAAIDPGsIn6xPb-Yt094Hbyt2vygJSQOXAAJNrAACXoTAS9-7y8vi2swfPQQ   // лого на экране СТАРТ
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
-const dirMenu = async ctx => { await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['🎯 Цели', 'gl:', 'primary'], ['🔄 Перевод', 'tr', 'primary']], [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };   // долги и «Назад» → СТАРТ (владелец 26.11)
+const dirMenu = async ctx => { if (ctx.wife) return wifeMenu(ctx); await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['🎯 Цели', 'gl:', 'primary'], ['🔄 Перевод', 'tr', 'primary']], [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };   // долги и «Назад» → СТАРТ (владелец 26.11)
 
 // ---------- Запись в таблицу ----------
 async function save(ctx, cfg, d) {
@@ -473,7 +478,7 @@ async function save(ctx, cfg, d) {
   const hhmm = d.time || nowT().toISOString().slice(11, 16);
   const when = Date.parse(d.date + 'T' + hhmm + ':00Z') - TZ_MS;
   const from = isIn(d.type) ? '' : d.from || '', to = isOut(d.type) ? '' : d.to || '';
-  const row = (id) => [id, { d: when }, 'Наиль', d.dir, d.type, d.group || '', d.cat || '', uzs, usdAmt, rate, from, to, 'ок', d.src || 'текст', d.comment || '', d.ord && d.ord !== 'new' ? d.ord : ''];
+  const row = (id) => [id, { d: when }, ctx.wife ? 'Жена' : 'Наиль', d.dir, d.type, d.group || '', d.cat || '', uzs, usdAmt, rate, from, to, 'ок', d.src || 'текст', d.comment || '', d.ord && d.ord !== 'new' ? d.ord : ''];
   if (d.edit) {
     const [f] = await gas(ctx, [{ op: 'find', sheet: 'Журнал', col: 'A', value: d.edit }]);
     if (!f.row) throw new Error('не нашёл запись ' + d.edit);
@@ -491,6 +496,7 @@ async function save(ctx, cfg, d) {
     ops.push({ op: 'append', sheet: 'Залоги и предоплаты', row: [id, { d: when }, d.type, d.dir, uzs, to, d.book ? { d: Date.parse(d.book) } : '', 'открыт', d.comment || '', d.ord && d.ord !== 'new' ? d.ord : ''] });
   await gas(ctx, ops);
   if (d.dir === 'Аренда PS5' || (d.type === 'Между своими' && /^Арс/.test(d.to || ''))) await rentEvent(ctx, d, id).catch(() => {});   // → рабочая группа
+  await wifeEvent(ctx, d, id).catch(() => {});   // жена: её трата → владельцу; перевод на BULKA → жене
   return id;
 }
 async function loadRow(ctx, id) {
@@ -584,6 +590,119 @@ async function nsFinish(ctx, ns) {
   return startScreen(ctx);
 }
 
+// ---------- Жена (задача 25, владелец 28.11) ----------
+// видит: все личные расходы, цели (кроме «Сюрприза»), остаток BULKA CARD; записывает свои траты (с BULKA CARD);
+// «💸 Дай денюжку»: сумма → на что → запрос владельцу (✅ Перевёл → с какой карты → перевод на BULKA / ❌ Нет);
+// голосовые — сразу пересылаются владельцу; переводы владельца на BULKA — сообщение жене.
+const WIFE_OK = ['ok', 'no', 'g', 's', 'dt', 'bk', 'cd', 'noop'];   // кнопки записи, которые ей можно
+async function wifeMenu(ctx) {
+  await putSt(ctx, {});
+  return send(ctx, '👋 <b>Привет!</b> Что делаем?', [[['➖ Записать трату', 'wx', 'danger']], [['💳 BULKA CARD', 'wb'], ['📉 Расходы', 'we']], [['🎯 Цели', 'wg'], ['💸 Дай денюжку', 'wd', 'success']]]);
+}
+async function wifeBulka(ctx) {
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+  const r = g.values.find(r => /^Булка/.test(String(r[0] || ''))), v = r ? Number(r[8]) || 0 : 0;
+  return send(ctx, `💳 <b>BULKA CARD</b>\n\nСейчас на карте: <b>${fmt(v)} сум</b>`, [[['↩️ Меню', 'wm']]]);
+}
+async function wifeGoals(ctx) {
+  const g = await getGoals(ctx); try { await goalProg(ctx, g); } catch (e) {}
+  const L = ['🎯 <b>Наши цели</b>', ''];
+  for (const id of goalOrder(g)) {
+    const x = g.list[id]; if (!x || /сюрприз/i.test(x.name || '')) continue;   // «Сюрприз» — жене не показывать
+    const prog = x.prog || x.saved || 0, cur = x.cur === '$' ? '$' : '';
+    const money = v => cur ? '$' + fmt(v) : fmt(v);
+    L.push(`${x.done ? '✅' : prog >= x.sum ? '🟢' : prog > 0 ? '🔵' : '⚪️'} <b>${esc(x.name)}</b> — ${money(Math.min(prog, x.sum))} из ${money(x.sum)}${x.due ? ' · до ' + dm(x.due) : ''}`);
+  }
+  if (L.length === 2) L.push('Целей пока нет.');
+  return send(ctx, L.join('\n'), [[['↩️ Меню', 'wm']]]);
+}
+async function onWife(ctx, m, q, cfg) {
+  ctx.trail = []; ctx.noTrack = true;
+  if (q) {
+    await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
+    const [k, v] = q.data.split(':'); const mid = q.message.message_id;
+    if (k === 'wm') { await gone(ctx, mid); return wifeMenu(ctx); }
+    if (k === 'wb') { await gone(ctx, mid); return wifeBulka(ctx); }
+    if (k === 'we') { await gone(ctx, mid); return monthReport(ctx, 'out', 3); }
+    if (k === 'wg') { await gone(ctx, mid); return wifeGoals(ctx); }
+    if (k === 'wx') { await gone(ctx, mid); await putSt(ctx, { dir: 'Личное', ptype: 'Расход' });
+      return send(ctx, '➖ <b>Пишите трату</b> — текстом или фото чека. Например: <code>продукты 150000</code>', [[['↩️ Меню', 'wm']]]); }
+    if (k === 'wd') { await gone(ctx, mid); await putSt(ctx, { await: 'wsum' });
+      return send(ctx, '💸 <b>Сколько нужно?</b> Напишите сумму, например <code>300000</code>.', [[['↩️ Меню', 'wm']]]); }
+    if (k === 'wc') {                                   // на что → запрос владельцу
+      const st = await getSt(ctx); if (!st.wreq) return wifeMenu(ctx);
+      const groups = [...new Set(cfg.cats.filter(c => c.dir === 'Личное' && c.kind === 'Расход').map(c => c.group))];
+      const what = v === 'x' ? 'другое' : groups[+v] || 'другое';
+      const R = (await store(ctx, { op: 'get', k: 'wreq' })) || { _n: 0 }; const rid = 'W' + (++R._n);
+      R[rid] = { id: rid, amount: st.wreq, what, chat: ctx.chat, at: Date.now(), done: false };
+      await store(ctx, { op: 'put', k: 'wreq', v: R }); await putSt(ctx, {});
+      for (const o of cfg.owners) await tg(ctx, 'sendMessage', { chat_id: o, parse_mode: 'HTML', text: premium(`👩 <b>Дай денюжку: ${fmt(st.wreq)} сум</b>\nНа что: ${esc(what)}`),
+        reply_markup: kb([[['✅ Перевёл', 'wp:' + rid, 'success'], ['❌ Нет', 'wn:' + rid, 'danger']]]) }).catch(() => {});
+      await edit(ctx, mid, `💸 Попросила ${fmt(st.wreq)} сум — ${esc(what)}.\nНаиль получил запрос, ответ придёт сюда.`);
+      return wifeMenu(ctx);
+    }
+    if (!WIFE_OK.includes(k)) return;                   // остальные кнопки — не для неё
+    return onCallback(ctx, q, true);
+  }
+  const text = (m.text || '').trim();
+  if (/^\/(start|menu)(@\w+)?$/i.test(text) || /^(отмена|стоп|меню)$/i.test(text)) return wifeMenu(ctx);
+  if (m.voice || m.audio || m.video_note) {             // голосовое — сразу владельцу (владелец 28.11)
+    for (const o of cfg.owners) await tg(ctx, 'forwardMessage', { chat_id: o, from_chat_id: ctx.chat, message_id: m.message_id }).catch(() => {});
+    const f = m.voice || m.audio || m.video_note;
+    const said = await transcribe(ctx, await tgFile(ctx, f.file_id)).catch(() => '');
+    const st = await getSt(ctx);
+    if (said && (st.d || st.await === 'wsum' || st.ptype)) return onWife(ctx, { ...m, voice: null, audio: null, video_note: null, text: said }, null, cfg);
+    return send(ctx, '🎤 Переслала Наилю' + (said ? ': «' + esc(said) + '»' : '.') + (said && /\d/.test(said) ? '\nЕсли это трата — нажмите «➖ Записать трату» и повторите.' : ''), [[['↩️ Меню', 'wm']]]);
+  }
+  const st = await getSt(ctx);
+  if (st.await === 'wsum') {                            // «Дай денюжку»: сумма → на что
+    const a = parseAmount(text); if (!a) return send(ctx, 'Напишите сумму числом, например <code>300000</code>.');
+    await putSt(ctx, { wreq: a.amount });
+    const groups = [...new Set(cfg.cats.filter(c => c.dir === 'Личное' && c.kind === 'Расход').map(c => c.group))];
+    return send(ctx, `💸 <b>${fmt(a.amount)} сум — на что?</b>`, [...chunk(groups.map((g, i) => [g, 'wc:' + i]), 2), [['Другое', 'wc:x']], [['↩️ Меню', 'wm']]]);
+  }
+  const img = m.photo ? m.photo[m.photo.length - 1] : null;
+  if (img) {
+    await send(ctx, '📷 Читаю фото…');
+    const seen = await readReceipt(ctx, await tgFile(ctx, img.file_id));
+    if (!seen) return send(ctx, '📷 Не смогла прочитать. Напишите текстом, например <code>продукты 150000</code>.');
+    ctx.ptype = 'Расход'; return startDraft(ctx, cfg, 'Личное', (m.caption ? m.caption + '. ' : '') + seen, 'фото');
+  }
+  if (!text) return;
+  if (st.d && st.await) return onMessage(ctx, m);       // ответ на вопрос записи (пометка, дата)
+  ctx.ptype = 'Расход'; return startDraft(ctx, cfg, 'Личное', text, 'текст');
+}
+async function wifeText(ctx, cfg, st, m, text) {
+  if (!text) return;
+  if (/^\//.test(text)) return wifeMenu(ctx);          // чужие команды — просто её меню
+  if (st.d && st.await) return draftText(ctx, cfg, st, m, text);
+  ctx.ptype = 'Расход'; return startDraft(ctx, cfg, 'Личное', text, 'текст');
+}
+async function wifeEvent(ctx, d, id) {
+  const cfg = await config(ctx), money = d.cur === '$' ? '$' + fmt(d.amount) : fmt(d.amount) + ' сум';
+  if (ctx.wife) { for (const o of cfg.owners) await tg(ctx, 'sendMessage', { chat_id: o, parse_mode: 'HTML', text: premium(`👩 <b>Жена записала:</b> ${esc(d.cat || d.group || d.type)} — ${money} (BULKA, ${id})`) }).catch(() => {}); return; }
+  if (d.type === 'Между своими' && /^Булка/.test(d.to || '') && !/^Жене:/.test(d.comment || '')) {   // перевод на BULKA → жене (владелец 28.11); по «Дай денюжку» — своё сообщение
+    if (ctx.dry) { ctx.out.push({ method: 'WIFE', text: `💸 На BULKA CARD: +${money}` }); return; }
+    for (const w of cfg.wife || []) await tg(ctx, 'sendMessage', { chat_id: w, parse_mode: 'HTML', text: premium(`💸 <b>На BULKA CARD: +${money}</b>`) }).catch(() => {});
+  }
+}
+async function onWifeReq(ctx, cfg, k, v, mid) {          // владелец отвечает на «Дай денюжку»
+  const R = (await store(ctx, { op: 'get', k: 'wreq' })) || {}; const [rid, ci] = v.split('|'); const x = R[rid];
+  if (!x || x.done) return edit(ctx, mid, 'Этот запрос уже закрыт.');
+  if (k === 'wn') { x.done = 'нет'; await store(ctx, { op: 'put', k: 'wreq', v: R });
+    await tg(ctx, 'sendMessage', { chat_id: x.chat, parse_mode: 'HTML', text: premium(`❌ Наиль: сейчас не получится (${fmt(x.amount)} — ${esc(x.what)}).`) }).catch(() => {});
+    return edit(ctx, mid, `❌ Отказ: ${fmt(x.amount)} сум — ${esc(x.what)}. Жене сообщил.`); }
+  const b = cardByWord(cfg, 'Булка');
+  if (k === 'wp') {
+    const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.cur === 'сум' && c !== b && !/^Арс/.test(c.name));
+    return edit(ctx, mid, `👩 ${fmt(x.amount)} сум — ${esc(x.what)}\n<b>С какой карты перевели на BULKA CARD?</b>`, chunk(cardSort(list).map(({ c, i }) => [cardLabel(c), `wpf:${rid}|${i}`]), 2));
+  }
+  const src = cfg.cards[+ci]; if (!src || !b) return edit(ctx, mid, 'Карта не найдена.');
+  const id = await botRec(ctx, cfg, { dir: 'Личное', type: 'Между своими', amount: x.amount, from: src.name, to: b.name, comment: `Жене: ${x.what}` });
+  x.done = id; await store(ctx, { op: 'put', k: 'wreq', v: R });
+  await tg(ctx, 'sendMessage', { chat_id: x.chat, parse_mode: 'HTML', text: premium(`✅ <b>Наиль перевёл ${fmt(x.amount)} сум</b> на BULKA CARD — ${esc(x.what)}.`) }).catch(() => {});
+  return edit(ctx, mid, `✅ Записал перевод ${fmt(x.amount)}: ${cardLabel(src)} → 🥖 BULKA CARD (${id}). Жене сообщил.`, [[['🗑 Отменить', 'rm:' + id]]]);
+}
 async function onTool(ctx, q) {
   const cfg = await config(ctx);
   const [k, id] = q.data.split(':'); const mid = q.message.message_id;
@@ -1048,6 +1167,7 @@ async function onMessage(ctx, m) {
     }
     return startScreen(ctx);
   }
+  if (ctx.wife) return wifeText(ctx, cfg, st, m, text);   // жена: только ответы по своей записи
   if (st.await === 'claude' && text && !/^\/(start|menu)$/i.test(text)) return claudeAdd(ctx, text);   // правка — раньше всех проверок («главное меню» в тексте правки не уводит в меню)
   if (/^\/menu$/i.test(text) || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
   if (/^\/newschet(@\w+)?$/i.test(text)) return nsStart(ctx);
@@ -1089,6 +1209,10 @@ async function onMessage(ctx, m) {
   if (st.g && st.await === 'fmsum') return fmSetPlan(ctx, text);
   if (st.g && ['gsum', 'gname', 'gamt', 'gdate'].includes(st.await)) return onGoalText(ctx, cfg, st, text);
   if (/закрыл[а-я]*\s+(оплат|поставщ)/i.test(text)) return closeSupplier(ctx, cfg);
+  return draftText(ctx, cfg, st, m, text);
+}
+// ответы на вопросы черновика (общие для владельца и жены)
+async function draftText(ctx, cfg, st, m, text) {
   if (st.await === 'amount' && st.d) {
     const many = parseAmounts(text);
     if (many) {                                            // оплата частями: доллары и сумы → отдельные записи по очереди
@@ -1447,6 +1571,7 @@ async function debtRows(ctx, cfg) {                         // кнопки до
   return rows;
 }
 async function startScreen(ctx) {
+  if (ctx.wife) return wifeMenu(ctx);
   await purge(ctx); await putSt(ctx, {});
   const cfg = await config(ctx);
   const rows = [[['СТАРТ', 'menu']]];
@@ -1878,6 +2003,7 @@ async function onCallback(ctx, q, again) {
   }
   if (k === 'menu') { await gone(ctx, mid); return dirMenu(ctx); }
   if (k === 'ns') { await gone(ctx, mid); return onNs(ctx, cfg, st, v); }
+  if (k === 'wp' || k === 'wn' || k === 'wpf') return onWifeReq(ctx, cfg, k, v, mid);   // ответ на «Дай денюжку»
   if (k === 'supd') { await gone(ctx, mid); return closeSupplier(ctx, cfg); }   // долг стирается в supplierDone, после ответа   // долг погашен до следующего /report
   if (k === 'sp') {                                  // после заявки PS SHOP: сколько рублей ушло поставщику
     await tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } });
@@ -2177,6 +2303,10 @@ async function handle(ctx, upd) {
     ctx.viewer = true; ctx.noTrack = true;
     if (q) { await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id }); await gone(ctx, q.message.message_id); }
     return viewerScreen(ctx, q ? q.data : 'vm', cfg).catch(e => send(ctx, '⚠️ Ошибка: ' + e.message));
+  }
+  if ((cfg.wife || []).includes(String(from.id)) && !cfg.owners.includes(String(from.id))) {   // жена (задача 25)
+    ctx.wife = true;
+    try { return await onWife(ctx, m, q, cfg); } catch (e) { if (ctx.dry) ctx.out.push({ method: 'ERR', text: e.stack }); return send(ctx, '⚠️ Ошибка: ' + e.message); }
   }
   if (!cfg.owners.includes(String(from.id))) {          // незнакомым не отвечаем, но запоминаем
     await ctx.env.KV.put('seen:' + from.id, JSON.stringify({ id: from.id, name: [from.first_name, from.last_name].filter(Boolean).join(' '), user: from.username || '', at: Date.now() }));
