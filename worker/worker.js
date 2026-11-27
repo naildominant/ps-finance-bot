@@ -625,6 +625,7 @@ async function morning(env) {
     if (dep) { await putSt(ctx, { tool: { kind: 'interest', card: dep.name }, await: 'tool' });
       await send(ctx, `📅 Начало месяца. Сколько сейчас на «${dep.name}»? Напишите сумму из приложения — разницу (проценты банка) прибавлю к вкладу.`); }
   }
+  try { const p = await fmToday(ctx); ctx.noTrack = true; await send(ctx, '☀️ <b>Доброе утро!</b>\n' + fmLine(p), [[['📊 План', 'fp', 'primary']]]); ctx.noTrack = false; } catch (e) {}   // дневной план каждое утро
   for (const x of Object.values((await store(ctx, { op: 'get', k: 'loans' })) || {})) {   // долги мне: в день возврата
     if (x.done || !x.due || x.due > today) continue;
     await send(ctx, `🤝 <b>Сегодня должны вернуть долг</b>\n${esc(x.whom)}: ${fmt(x.sum)} сум`, [[['✅ Вернули', 'ln:' + x.id]]]);
@@ -847,6 +848,7 @@ async function onMessage(ctx, m) {
   { const r = text.match(/^(?:долг\s*(?:поставщику)?\s*)?([\d\s.,]+)\s*(?:руб[а-я.]*|₽|rub)$/i);   // «4607 руб», «долг 4 607,72 ₽»
     if (r || (st.await === 'tool' && st.tool && st.tool.kind === 'hps' && num(text) > 0)) return setSupDebt(ctx, { rub: num(r ? r[1] : text), usdt: null }); }
   if (st.await === 'tool' && st.tool) return onToolText(ctx, cfg, st, text);
+  if (st.g && st.await === 'fmsum') return fmSetPlan(ctx, text);
   if (st.g && ['gsum', 'gname', 'gamt', 'gdate'].includes(st.await)) return onGoalText(ctx, cfg, st, text);
   if (/закрыл[а-я]*\s+(оплат|поставщ)/i.test(text)) return closeSupplier(ctx, cfg);
   if (st.await === 'amount' && st.d) {
@@ -1155,8 +1157,8 @@ async function flatReminder(env, when) {
   const ctx = { env, out: [] }; const cfg = await config(ctx, true);
   ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
   ctx.noTrack = true;
-  await send(ctx, when === 'eve' ? `🏠 <b>Завтра, ${FLAT_DAY}-го — оплата квартиры $${FLAT_USD}</b>` : `🏠 <b>Сегодня ${FLAT_DAY}-е — оплата квартиры $${FLAT_USD}</b>\nОплатили?`,
-    [[['✅ Оплатил', 'flat']]]);
+  await send(ctx, when === 'eve' ? `🏠 <b>Завтра, ${FLAT_DAY}-го — оплата квартиры $${FLAT_USD}</b>\n\n📊 <b>Завтра итог месяца</b>: закройте все оплаты и запишите траты.` : `🏠 <b>Сегодня ${FLAT_DAY}-е — оплата квартиры $${FLAT_USD}</b>\nОплатили?`,
+    when === 'eve' ? [[['✅ Оплатил', 'flat']]] : [[['✅ Оплатил', 'flat']], [['📊 Начать разбор месяца', 'fmr:1', 'primary']]]);
 }
 async function supReminder(env) {
   const ctx = { env, out: [] }; const cfg = await config(ctx, true);
@@ -1179,7 +1181,8 @@ async function startScreen(ctx) {
   rows.push(...await debtRows(ctx, cfg));
   const lg = await tg(ctx, 'sendSticker', { chat_id: ctx.chat, sticker: LOGO_STICKER });   // лого владельца сверху (27.11)
   if (lg && lg.ok && ctx.trail) ctx.trail.push(lg.result.message_id);
-  return send(ctx, PAD(9) + '👇' + PAD(9), rows);
+  let plan = ''; try { plan = fmLine(await fmToday(ctx)) + '\n\n'; } catch (e) {}   // дневной план всегда на СТАРТ (задача 17)
+  return send(ctx, plan + PAD(9) + '👇' + PAD(9), rows);
 }
 
 // ---------- LEADEX (владелец 27.11): сделки. Предоплата — «облако» (чужие деньги), Поступление закрывает сделку и делит всё ----------
@@ -1222,11 +1225,13 @@ function gShort(n, cur) {
   return fmt(n);
 }
 const strike = s => [...s].map(c => c + '̶').join('');
-const ymNow = () => todayYmd().slice(0, 7);
+const ymNow = () => fmBounds().start;   // «месяц» подушки = финмесяц 26 → 25 (задача 17)
 async function goalsScreen(ctx) {
   const g = await getGoals(ctx), c = g.cush, mon = c.m[ymNow()] || 0;
   const all = Object.values(g.list).sort((a, b) => (a.done - b.done) || String(a.due || '9').localeCompare(String(b.due || '9')));
-  const rows = [[[`🛟 Подушка: $${fmt(c.total)}`, 'gl:cush', mon >= CUSH_USD ? 'primary' : undefined]]];
+  const rows = [];
+  try { const p = await fmToday(ctx); rows.push([[p.over ? '📊 Разбор месяца ⏳' : `📊 План до ${dm(p.fm.due)} · ${p.rem ? gShort(p.nal) + ' из ' + gShort(p.fm.plan) : 'закрыт ✅'}`, 'fp', p.rem && !p.over ? 'primary' : 'success']]); } catch (e) {}
+  rows.push([[`🛟 Подушка: $${fmt(c.total)}`, 'gl:cush', mon >= CUSH_USD ? 'primary' : undefined]]);
   for (const x of all) {
     if (x.done) { rows.push([[`✅ ${strike(x.name)}`, 'gl:' + x.id, 'success']]); continue; }
     const full = x.saved >= x.sum;
@@ -1332,6 +1337,162 @@ async function cushionReminder(env) {                      // 20-го в 23:50: 
   await send(ctx, `🛟 <b>Подушка: в этом месяце отложено $${fmt(mon)} из $${CUSH_USD}</b>\nОтложите ещё $${fmt(CUSH_USD - mon)}.`, [[['💰 Отложил', 'gs:cush', 'primary']]]);
 }
 
+// ---------- Финмесяц 26 → 25 и дневной план (задача 17, владелец 27.11) ----------
+// план = расходы на месяц (1-й месяц — список из опроса в DO fmBase, дальше — реальные траты Личного прошлого финмесяца) + подушка + цели со сроком
+// до конца следующего календарного месяца; всё ×1,2 (запас). Прогресс = остаток «Нал» (сумы). День: веса 1–9 и 26–31 ×1, 10–19 ×1,5, 20–25 ×2.
+const FM_DAY = 26, FM_BUF = 1.2, FM_SHEET = 'Финмесяцы';
+const fmW = ymd => { const d = +ymd.slice(8, 10); return d >= 20 && d <= 25 ? 2 : d >= 10 && d < 20 ? 1.5 : 1; };
+const p2 = n => String(n).padStart(2, '0');
+function fmBounds(ymd) {
+  let [y, m, d] = (ymd || todayYmd()).split('-').map(Number);
+  if (d < FM_DAY) { m--; if (m < 1) { m = 12; y--; } }
+  let y2 = y, m2 = m + 1; if (m2 > 12) { m2 = 1; y2++; }
+  const last = new Date(Date.UTC(y2, m2, 0)).getUTCDate();
+  return { start: `${y}-${p2(m)}-${FM_DAY}`, end: `${y2}-${p2(m2)}-25`, due: `${y2}-${p2(m2)}-${FM_DAY}`, horizon: `${y2}-${p2(m2)}-${last}` };
+}
+const dm = ymd => ymd.slice(8, 10) + '.' + ymd.slice(5, 7);
+const inVklad = x => /вклад/i.test(x.card || '') || x.name === 'Сюрприз';   // копится на вкладе — не в план по Налу
+async function nalBalance(ctx) {
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
+  const r = g.values.find(r => /^Нал/.test(String(r[0] || '')));
+  return r ? Number(r[8]) || 0 : 0;
+}
+async function fmStats(ctx, start, end) {             // доходы и расходы за финмесяц из Журнала
+  const recs = (await journal(ctx)).filter(x => { const d = ymdT(new Date(x.t + TZ_MS)); return x.t && d >= start && d <= end && !/^Доля из/.test(x.cat || ''); });
+  const s = { inc: {}, exp: {}, lexp: {}, incT: 0, expT: 0, lexpT: 0 };
+  for (const x of recs) {
+    if (x.type === 'Доход') { s.inc[x.dir] = (s.inc[x.dir] || 0) + x.uzs; s.incT += x.uzs; }
+    if (x.type === 'Расход') { s.exp[x.dir] = (s.exp[x.dir] || 0) + x.uzs; s.expT += x.uzs;
+      if (x.dir === 'Личное') { const g = x.group || x.cat || 'Прочее'; s.lexp[g] = (s.lexp[g] || 0) + x.uzs; s.lexpT += x.uzs; } }
+  }
+  return s;
+}
+async function fmMake(ctx, b, prev) {                 // новый план финмесяца
+  const rate = await cbuRate(ctx, todayYmd());
+  let exp;
+  if (prev && prev.lexpT > 0) exp = Object.entries(prev.lexp).sort((a, c) => c[1] - a[1]).map(([n, v]) => [n, Math.round(v)]);
+  else exp = ((await store(ctx, { op: 'get', k: 'fmBase' })) || []).map(([n, a, cur]) => [n, Math.round(cur === '$' ? a * rate : a)]);
+  const cush = Math.round(CUSH_USD * rate);
+  const g = await getGoals(ctx), goals = [], far = [];
+  for (const x of Object.values(g.list)) {
+    if (x.done) continue;
+    const left = Math.max(0, Math.round((x.cur === '$' ? rate : 1) * (x.sum - (x.card && !/^Нал/.test(x.card) ? x.saved : 0))));
+    if (!inVklad(x) && (!x.due || x.due <= b.horizon)) goals.push([x.id, x.name, left, x.due]); else far.push([x.id, x.name, left, x.due]);
+  }
+  const base = exp.reduce((s, e) => s + e[1], 0) + cush + goals.reduce((s, e) => s + e[2], 0);
+  return { ...b, exp, cush, goals, far, base, plan: Math.round(base * FM_BUF / 1000) * 1000, src: prev && prev.lexpT > 0 ? 'факт' : 'опрос', at: Date.now() };
+}
+async function getFm(ctx) {                            // текущий план; первый раз — создаётся сам
+  const b = fmBounds(); let fm = await store(ctx, { op: 'get', k: 'fm' });
+  if (!fm) { fm = await fmMake(ctx, b, null); await store(ctx, { op: 'put', k: 'fm', v: fm }); }
+  return { fm, over: fm.start < b.start };           // over — месяц закончился, ждём разбор
+}
+async function fmToday(ctx) {
+  const { fm, over } = await getFm(ctx), nal = await nalBalance(ctx), t = todayYmd();
+  const rem = Math.max(0, fm.plan - nal); let W = 0;
+  for (let d = t; d <= fm.end; d = shiftYmd(d, 1)) W += fmW(d);
+  const need = rem && W ? Math.ceil(rem * fmW(t) / W / 1000) * 1000 : 0;
+  return { fm, over, nal, rem, need, pct: fm.plan ? Math.max(0, Math.min(100, Math.round(nal / fm.plan * 100))) : 0 };
+}
+const fmLine = s => s.over ? `📊 Финмесяц закончился — нажмите «Разбор месяца»`
+  : s.rem ? `📊 План до ${dm(s.fm.due)}: ${gShort(s.nal)} из ${gShort(s.fm.plan)} (${s.pct}%) · сегодня ${gShort(s.need)}`
+  : `📊 План до ${dm(s.fm.due)} закрыт ✅ ${gShort(s.nal)} из ${gShort(s.fm.plan)}`;
+async function fmScreen(ctx) {
+  const s = await fmToday(ctx), f = s.fm, L = [];
+  L.push(`📊 <b>План до ${human(f.due)}</b>`, `Финмесяц ${dm(f.start)} → ${dm(f.end)}`, '');
+  L.push(`💰 Собрано (Нал): <b>${fmt(s.nal)}</b> из ${fmt(f.plan)} (${s.pct}%)`);
+  if (s.over) L.push('⏳ Месяц закончился — пора на разбор.');
+  else if (s.rem) { const days = Math.round((Date.parse(f.end) - Date.parse(todayYmd())) / DAY) + 1;
+    L.push(`Осталось: ${fmt(s.rem)} · дней: ${days}`, `🎯 <b>Сегодня нужно: ${fmt(s.need)}</b> (день ×${String(fmW(todayYmd())).replace('.', ',')})`); }
+  else L.push('✅ <b>План закрыт!</b>');
+  L.push('', `<b>Расходы на месяц</b> (${f.src === 'факт' ? 'по факту прошлого месяца' : 'по опросу'}): ${fmt(f.exp.reduce((a, e) => a + e[1], 0))}`);
+  for (const [n, v] of f.exp) L.push(`   ${esc(n)} — ${fmt(v)}`);
+  L.push(`🛟 Подушка $${CUSH_USD} — ${fmt(f.cush)}`);
+  if (f.goals.length) { L.push('', '<b>Цели</b>'); for (const [, n, v, d] of f.goals) L.push(`   ${esc(n)} — ${fmt(v)}${d ? ' · до ' + dm(d) : ''}`); }
+  L.push('', `Запас +${Math.round((FM_BUF - 1) * 100)}%: ${fmt(f.plan - f.base)}`, '━━━━━━━━━━', `<b>План: ${fmt(f.plan)}</b>`);
+  if (f.far.length) { L.push('', '🔮 <b>Дальше</b>'); for (const [, n, v, d] of f.far) L.push(`   ${esc(n)} — ${fmt(v)}${d ? ' · до ' + human(d) : ''}`); }
+  return send(ctx, L.join('\n'), [[['📊 Разбор месяца', 'fmr:1', 'primary']], [['↩️ Назад', 'gl:']]]);
+}
+async function aiNote(ctx, facts) {                    // короткий вывод ИИ (может ошибаться; цифры — из таблицы)
+  try {
+    const r = await ctx.env.AI.run(MODEL, { messages: [{ role: 'system', content: 'Ты финансовый помощник. По цифрам дай 2–3 коротких вывода по-русски простыми словами: что выросло, что упало, на что обратить внимание в следующем месяце. Без вступлений, без markdown, только факты из цифр.' }, { role: 'user', content: facts }], max_tokens: 300, temperature: 0.2 });
+    return String(typeof r.response === 'string' ? r.response : '').trim().slice(0, 700);
+  } catch (e) { return ''; }
+}
+async function fmReview(ctx, step) {                   // разбор месяца: 5 шагов
+  const { fm, over } = await getFm(ctx);
+  const s = await fmStats(ctx, fm.start, fm.end), hist = (await store(ctx, { op: 'get', k: 'fmHist' })) || {};
+  const prevKey = Object.keys(hist).filter(k => k < fm.start).sort().pop(), pv = prevKey ? hist[prevKey] : null;
+  const cmp = (v, p) => p == null ? '' : p ? ` (${v >= p ? '+' : ''}${Math.round((v - p) / p * 100)}%)` : '';
+  const name = d => d === 'Leadex' ? 'LEADEX' : d;
+  const L = [`📊 <b>Разбор месяца ${dm(fm.start)} → ${dm(fm.end)}</b> · шаг ${step} из 5`, ''];
+  if (step === 1) { const nal = await nalBalance(ctx);
+    L.push('<b>1. План и факт</b>', `План: ${fmt(fm.plan)}`, `Собрано (Нал): ${fmt(nal)} (${fm.plan ? Math.round(nal / fm.plan * 100) : 0}%)`,
+      nal >= fm.plan ? '✅ План закрыт' : `❌ Не хватило: ${fmt(fm.plan - nal)}`); }
+  if (step === 2) { L.push('<b>2. Доходы по бизнесам</b>');
+    for (const d of DIRS) if (s.inc[d] || (pv && pv.inc[d])) L.push(`   ${name(d)} — ${fmt(s.inc[d] || 0)}${cmp(s.inc[d] || 0, pv ? pv.inc[d] || 0 : null)}`);
+    L.push('━━━━━━━━━━', `<b>Всего: ${fmt(s.incT)}</b>${cmp(s.incT, pv ? pv.incT : null)}`); }
+  if (step === 3) { L.push('<b>3. Расходы</b>');
+    for (const d of DIRS) if (s.exp[d]) L.push(`   ${name(d)} — ${fmt(s.exp[d])}${cmp(s.exp[d], pv ? pv.exp[d] || 0 : null)}`);
+    if (s.lexpT) { L.push('', '<b>Личное по группам</b>'); for (const [g, v] of Object.entries(s.lexp).sort((a, b) => b[1] - a[1])) L.push(`   ${esc(g)} — ${fmt(v)}${cmp(v, pv ? pv.lexp[g] || 0 : null)}`); }
+    L.push('━━━━━━━━━━', `<b>Всего: ${fmt(s.expT)}</b>${cmp(s.expT, pv ? pv.expT : null)}`);
+    if (!pv) L.push('', 'Сравнение с прошлым месяцем появится со следующего разбора.'); }
+  if (step === 4) { L.push('<b>4. Цели</b>'); const g = await getGoals(ctx);
+    for (const x of Object.values(g.list).sort((a, b) => String(a.due || '9').localeCompare(String(b.due || '9')))) {
+      if (x.done) { L.push(`   ✅ ${esc(x.name)} — выполнена`); continue; }
+      const p = Math.round(x.saved / x.sum * 100), late = x.due && x.due < todayYmd() && x.saved < x.sum;
+      L.push(`   ${late ? '⚠️' : x.saved >= x.sum ? '✅' : '▫️'} ${esc(x.name)} — ${gShort(x.saved, x.cur)} из ${gShort(x.sum, x.cur)} (${p}%)${x.due ? ' · до ' + dm(x.due) : ''}`); }
+    const c = g.cush; L.push(`   🛟 Подушка — $${fmt(c.total)}, за этот месяц $${fmt(c.m[fm.start] || 0)} из $${CUSH_USD}`); }
+  if (step === 5) {
+    const ks = [...Object.keys(hist).filter(k => k < fm.start)], n = ks.length + 1;
+    const avg = f => Math.round((ks.reduce((a, k) => a + f(hist[k]), 0) + f(s)) / n);
+    const nb = fmBounds(fm.due), next = await fmMake(ctx, nb, s);
+    L.push('<b>5. Прогноз на следующий месяц</b>', `(по ${n} мес.)`);
+    for (const d of DIRS) { const v = avg(h => h.inc[d] || 0); if (v) L.push(`   Доход ${name(d)} — ~${fmt(v)}`); }
+    L.push(`   Расходы всего — ~${fmt(avg(h => h.expT))}`, `   Личные расходы — ~${fmt(avg(h => h.lexpT))}`, `   План до ${dm(nb.due)} — ~${fmt(next.plan)}`);
+    const note = await aiNote(ctx, `Финмесяц ${fm.start}..${fm.end}. Доходы: ${JSON.stringify(s.inc)}, всего ${s.incT}. Расходы: ${JSON.stringify(s.exp)}, всего ${s.expT}. Личные по группам: ${JSON.stringify(s.lexp)}.` + (pv ? ` Прошлый месяц: доходы ${JSON.stringify(pv.inc)}, расходы ${JSON.stringify(pv.exp)}, личные ${JSON.stringify(pv.lexp)}.` : ' Прошлого месяца нет.') + ` План был ${fm.plan}. Следующий план ${next.plan}.`);
+    if (note) L.push('', '💬 <b>Вывод ИИ</b> (может ошибаться):', esc(note));
+    await store(ctx, { op: 'put', k: 'fmNote', v: note });
+  }
+  const nav = [];
+  if (step > 1) nav.push(['◀️', 'fmr:' + (step - 1)]);
+  if (step < 5) nav.push(['Дальше ▶️', 'fmr:' + (step + 1), 'primary']);
+  const rows = [nav];
+  if (step === 5 && over) rows.push([['✅ Начать новый месяц', 'fmn', 'success']]);
+  if (step === 5 && !over) L.push('', `ℹ️ Месяц ещё идёт — «Начать новый месяц» появится ${human(fm.due)}.`);
+  rows.push([['↩️ Назад', 'fp']]);
+  return send(ctx, L.join('\n'), rows);
+}
+async function fmClose(ctx) {                          // 26-е: итог в таблицу + новый план на подтверждение
+  const { fm, over } = await getFm(ctx); if (!over) return fmScreen(ctx);
+  const s = await fmStats(ctx, fm.start, fm.end), nal = await nalBalance(ctx), g = await getGoals(ctx);
+  const hist = (await store(ctx, { op: 'get', k: 'fmHist' })) || {};
+  const ks = Object.keys(hist), n = ks.length + 1, avg = f => Math.round((ks.reduce((a, k) => a + f(hist[k]), 0) + f(s)) / n);
+  hist[fm.start] = { ...s, plan: fm.plan, nal }; await store(ctx, { op: 'put', k: 'fmHist', v: hist });
+  const next = await fmMake(ctx, fmBounds(), s);
+  const goalsTxt = Object.values(g.list).map(x => `${x.name}: ${x.done ? 'выполнена' : Math.round(x.saved / x.sum * 100) + '%'}`).join('; ');
+  await gas(ctx, [{ op: 'append', sheet: FM_SHEET, row: [`${dm(fm.start)}.${fm.start.slice(0, 4)} – ${dm(fm.end)}.${fm.end.slice(0, 4)}`, fm.plan, nal, nal >= fm.plan ? 'да' : 'нет',
+    s.inc['PS SHOP'] || 0, s.inc['Аренда PS5'] || 0, s.inc['Leadex'] || 0, s.inc['Личное'] || 0, s.incT, s.expT, s.lexpT, goalsTxt,
+    avg(h => h.incT), avg(h => h.expT), next.plan, (await store(ctx, { op: 'get', k: 'fmNote' })) || ''] }]);
+  await store(ctx, { op: 'put', k: 'fm', v: { ...next, draft: true } });
+  await send(ctx, `✅ Итог месяца ${dm(fm.start)} → ${dm(fm.end)} записан в таблицу (лист «${FM_SHEET}»).`);
+  return fmScreen(ctx).then(() => send(ctx, `📊 <b>Новый план до ${human(next.due)}: ${fmt(next.plan)}</b>\nПринять или поставить свою сумму?`, [[['✅ Принять', 'fma', 'success'], ['✏️ Своя сумма', 'fme']]]));
+}
+async function onFm(ctx, cfg, k, v, mid, st) {
+  await gone(ctx, mid); await putSt(ctx, {});
+  if (k === 'fp') return fmScreen(ctx);
+  if (k === 'fmr') return fmReview(ctx, Math.min(5, Math.max(1, +v || 1)));
+  if (k === 'fmn') return fmClose(ctx);
+  if (k === 'fma') { const fm = await store(ctx, { op: 'get', k: 'fm' }); if (fm) { fm.draft = false; await store(ctx, { op: 'put', k: 'fm', v: fm }); } await send(ctx, '✅ План принят. Удачного месяца!'); return goalsScreen(ctx); }
+  if (k === 'fme') { await putSt(ctx, { g: {}, await: 'fmsum' }); return send(ctx, '✏️ Какой план на месяц? Напишите сумму, например <code>40000000</code>.', [[['↩️ Назад', 'fp']]]); }
+}
+async function fmSetPlan(ctx, text) {
+  const a = parseAmount(text.replace(/сум[а-я]*/i, '')); if (!a || !(a.amount > 0)) return send(ctx, 'Не понял сумму. Например <code>40000000</code>.');
+  const fm = await store(ctx, { op: 'get', k: 'fm' }); fm.plan = Math.round(a.amount); fm.draft = false; fm.manual = true;
+  await store(ctx, { op: 'put', k: 'fm', v: fm }); await putSt(ctx, {});
+  await send(ctx, `✅ План на месяц: ${fmt(fm.plan)}.`); return fmScreen(ctx);
+}
+
 async function onCallback(ctx, q, again) {
   const cfg = await config(ctx);
   const [k, v] = q.data.split(':');
@@ -1417,7 +1578,8 @@ async function onCallback(ctx, q, again) {
     if (v === 'tab') return send(ctx, '📄 Таблицы аренды ещё нет. Привяжем позже.', [[['↩️ Назад', 'd:1']]]);
     return onCallback(ctx, { ...q, data: 'pt:-' }, true);
   }
-  if (['gl', 'gs', 'gk', 'gd', 'gx', 'gy', 'gn', 'gw'].includes(k)) return onGoal(ctx, cfg, k, v, mid, st);   // 🎯 Цели
+  if (['gl', 'gs', 'gk', 'gd', 'gx', 'gy', 'gn', 'gw'].includes(k)) return onGoal(ctx, cfg, k, v, mid, st);
+  if (['fp', 'fmr', 'fmn', 'fma', 'fme'].includes(k)) return onFm(ctx, cfg, k, v, mid, st);   // 📊 план финмесяца   // 🎯 Цели
   if (k === 'ln') {                                  // «Дал в долг» (владелец 27.11)
     await gone(ctx, mid);
     if (v === 'new') return askNext(ctx, cfg, { d: Object.assign(draftFrom(cfg, 'Личное', { type: 'Дал в долг' }, '', true), { src: 'кнопка', n: 1, of: 1, comment: 'Дал в долг' }), queue: [], dir: 'Личное' });
@@ -1746,6 +1908,7 @@ export default {
     }
     if (u.pathname === '/flat') { await flatReminder(env, u.searchParams.get('w') || 'day'); return new Response('done'); }
     if (u.pathname === '/morning') { await morning(env); return new Response('done'); }
+    if (u.pathname === '/fmbase' && req.method === 'POST') { const c = { env, dry: !!u.searchParams.get('dry') }; await store(c, { op: 'put', k: 'fmBase', v: await req.json() }); return new Response('saved'); }   // расходы из опроса (суммы не в коде)
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
     return new Response('ok');
   },
