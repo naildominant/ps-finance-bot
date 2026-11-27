@@ -1301,7 +1301,7 @@ async function goalsScreen(ctx) {
   const all = goalOrder(g).map(id => g.list[id]).sort((a, b) => a.done - b.done);
   const rows = [];
   try { const p = await fmToday(ctx); rows.push([[p.over ? '📊 Разбор месяца ⏳' : `📊 План до ${dm(p.fm.due)} · ${p.rem ? gShort(p.nal) + ' из ' + gShort(p.fm.plan) : 'закрыт ✅'}`, 'fp', p.rem && !p.over ? 'primary' : 'success']]); } catch (e) {}
-  rows.push([[`🛟 Подушка: $${fmt(c.total)}`, 'gl:cush', mon >= CUSH_USD ? 'primary' : undefined]]);
+  rows.push([[`🔒 ФОНД: $${fmt(c.total)}`, 'gl:cush', mon >= CUSH_USD ? 'primary' : undefined]]);
   for (const x of all) {
     if (x.done) { rows.push([[`✅ ${strike(x.name)}`, 'gl:' + x.id, 'success']]); continue; }
     const full = x.prog >= x.sum;
@@ -1314,7 +1314,7 @@ async function goalScreen(ctx, id) {
   const g = await goalProg(ctx, await getGoals(ctx));
   if (id === 'cush') {
     const c = g.cush, mon = c.m[ymNow()] || 0;
-    return send(ctx, `🛟 <b>Подушка безопасности</b>\nВсего: <b>$${fmt(c.total)}</b>\nВ этом месяце: $${fmt(mon)} из $${CUSH_USD}${mon >= CUSH_USD ? ' ✅' : ''}` + (c.card ? `\n💳 Лежит: ${esc(c.card)}` : ''),
+    return send(ctx, `🔒 <b>ФОНД</b> (подушка безопасности)\nВсего: <b>$${fmt(c.total)}</b>\nВ этом месяце: $${fmt(mon)} из $${CUSH_USD}${mon >= CUSH_USD ? ' ✅' : ''}` + (c.card ? `\n💳 Лежит: ${esc(c.card)}` : ''),
       [[['💰 Отложил', 'gs:cush', 'primary']], [['↩️ Назад', 'gl:']]]);
   }
   const x = g.list[id]; if (!x) return goalsScreen(ctx);
@@ -1344,7 +1344,7 @@ async function goalAdd(ctx, cfg, id, amt, card) {          // отложил н�
     x.saved += amt; x.card = card; }
   await putGoals(ctx, g); await putSt(ctx, {});
   const x = id === 'cush' ? null : g.list[id];
-  await send(ctx, `✅ Отложено ${gMoney(amt, x ? x.cur : '$')} → ${x ? esc(x.name) : 'Подушка'}` + (x && (await goalProg(ctx, g)).list[id].prog >= x.sum ? '\n🎉 Цель накоплена! Нажмите её и «Готово», когда потратите.' : ''));
+  await send(ctx, `✅ Отложено ${gMoney(amt, x ? x.cur : '$')} → ${x ? esc(x.name) : '🔒 ФОНД'}` + (x && (await goalProg(ctx, g)).list[id].prog >= x.sum ? '\n🎉 Цель накоплена! Нажмите её и «Готово», когда потратите.' : ''));
   return goalsScreen(ctx);
 }
 async function onGoal(ctx, cfg, k, v, mid, st) {
@@ -1416,7 +1416,7 @@ async function cushionReminder(env) {                      // 20-го в 23:50: 
   ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
   const mon = (await getGoals(ctx)).cush.m[ymNow()] || 0; if (mon >= CUSH_USD) return;
   ctx.noTrack = true;
-  await send(ctx, `🛟 <b>Подушка: в этом месяце отложено $${fmt(mon)} из $${CUSH_USD}</b>\nОтложите ещё $${fmt(CUSH_USD - mon)}.`, [[['💰 Отложил', 'gs:cush', 'primary']]]);
+  await send(ctx, `🔒 <b>ФОНД: в этом месяце отложено $${fmt(mon)} из $${CUSH_USD}</b>\nОтложите ещё $${fmt(CUSH_USD - mon)}.`, [[['💰 Отложил', 'gs:cush', 'primary']]]);
 }
 
 // ---------- Финмесяц 26 → 25 и дневной план (задача 17, владелец 27.11) ----------
@@ -1503,7 +1503,7 @@ async function fmScreen(ctx) {
   else L.push('✅ <b>План закрыт!</b>');
   L.push('', `<b>Расходы на месяц</b> (${f.src === 'факт' ? 'по факту прошлого месяца' : 'по опросу'}): ${fmt(f.exp.reduce((a, e) => a + e[1], 0))}`);
   for (const [n, v] of f.exp) L.push(`   ${esc(n)} — ${fmt(v)}`);
-  L.push(`🛟 Подушка $${CUSH_USD} — ${fmt(f.cush)}`);
+  L.push(`🔒 ФОНД $${CUSH_USD} — ${fmt(f.cush)}`);
   if (f.goals.length) { L.push('', '<b>Цели</b>'); for (const [, n, v, d] of f.goals) L.push(`   ${esc(n)} — ${fmt(v)}${d ? ' · до ' + dm(d) : ''}`); }
   L.push('', `Запас +${Math.round((FM_BUF - 1) * 100)}%: ${fmt(f.plan - f.base)}`, '━━━━━━━━━━', `<b>План: ${fmt(f.plan)}</b>`);
   if (f.far.length) { L.push('', '🔮 <b>Дальше</b>'); for (const [, n, v, d] of f.far) L.push(`   ${esc(n)} — ${fmt(v)}${d ? ' · до ' + human(d) : ''}`); }
@@ -1538,7 +1538,7 @@ async function fmReview(ctx, step) {                   // разбор меся�
       if (x.done) { L.push(`   ✅ ${esc(x.name)} — выполнена`); continue; }
       const p = Math.round(x.prog / x.sum * 100), late = x.due && x.due < todayYmd() && x.prog < x.sum;
       L.push(`   ${late ? '⚠️' : x.prog >= x.sum ? '✅' : '▫️'} ${esc(x.name)} — ${gShort(x.prog, x.cur)} из ${gShort(x.sum, x.cur)} (${p}%)${x.due ? ' · до ' + dm(x.due) : ''}`); }
-    const c = g.cush; L.push(`   🛟 Подушка — $${fmt(c.total)}, за этот месяц $${fmt(c.m[fm.start] || 0)} из $${CUSH_USD}`); }
+    const c = g.cush; L.push(`   🔒 ФОНД — $${fmt(c.total)}, за этот месяц $${fmt(c.m[fm.start] || 0)} из $${CUSH_USD}`); }
   if (step === 5) {
     const ks = [...Object.keys(hist).filter(k => k < fm.start)], n = ks.length + 1;
     const avg = f => Math.round((ks.reduce((a, k) => a + f(hist[k]), 0) + f(s)) / n);
