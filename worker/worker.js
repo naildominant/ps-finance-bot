@@ -1484,6 +1484,13 @@ async function fmClose(ctx) {                          // 26-е: итог в т�
   await send(ctx, `✅ Итог месяца ${dm(fm.start)} → ${dm(fm.end)} записан в таблицу (лист «${FM_SHEET}»).`);
   return fmScreen(ctx).then(() => send(ctx, `📊 <b>Новый план до ${human(next.due)}: ${fmt(next.plan)}</b>\nПринять или поставить свою сумму?`, [[['✅ Принять', 'fma', 'success'], ['✏️ Своя сумма', 'fme']]]));
 }
+async function fmEvening(env) {                       // 23:03: норма дня не набрана — напомнить (владелец 27.11)
+  const ctx = { env, out: [] }; const cfg = await config(ctx, true);
+  ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
+  const s = await fmToday(ctx); if (s.over || !s.rem || !s.need || s.done >= s.need) return;
+  ctx.noTrack = true;
+  await send(ctx, `📊 <b>Сегодня норма не набрана</b>\nОтложено в Нал: ${fmt(s.done)} из ${fmt(s.need)}, осталось ${fmt(s.need - s.done)}.\nНе успели — остаток разложится на следующие дни.`, [[['📊 План', 'fp', 'primary']]]);
+}
 async function onFm(ctx, cfg, k, v, mid, st) {
   await gone(ctx, mid); await putSt(ctx, {});
   if (k === 'fp') return fmScreen(ctx);
@@ -1852,7 +1859,7 @@ export class State {
 }
 
 export default {
-  async scheduled(ev, env, ectx) { ectx.waitUntil(ev.cron === '3 18 * * *' ? supReminder(env).then(() => flatReminder(env, 'eve')).then(() => cushionReminder(env)) : ev.cron === '31 7 * * *' ? flatReminder(env, 'day') : morning(env)); },
+  async scheduled(ev, env, ectx) { ectx.waitUntil(ev.cron === '3 18 * * *' ? supReminder(env).then(() => flatReminder(env, 'eve')).then(() => cushionReminder(env)).then(() => fmEvening(env)) : ev.cron === '31 7 * * *' ? flatReminder(env, 'day') : morning(env)); },
   async fetch(req, env, ectx) {
     const u = new URL(req.url);
     if (u.pathname === '/tg' && req.method === 'POST') {
