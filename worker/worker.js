@@ -124,6 +124,11 @@ const todayYmd = () => ymdT(nowT());
 const shiftYmd = (ymd, days) => ymdT(new Date(Date.parse(ymd) + days * DAY));
 const human = ymd => { const [y, m, d] = ymd.split('-'); const t = todayYmd();
   return `${d}.${m}.${y}` + (ymd === t ? ' (сегодня)' : ymd === shiftYmd(t, -1) ? ' (вчера)' : ''); };
+// дата в будущем (цель, срок аренды, бронь, возврат долга): без года и уже прошла — значит следующий год (владелец 28.11)
+function parseFuture(s) {
+  const r = parseDate(s); if (!r) return null;
+  return !/\d{4}/.test(String(s)) && r < todayYmd() ? `${Number(r.slice(0, 4)) + 1}${r.slice(4)}` : r;
+}
 function parseDate(s) {
   s = String(s || '').trim().toLowerCase();
   if (!s || s === 'сегодня') return todayYmd();
@@ -135,7 +140,7 @@ function parseDate(s) {
     const w = s.match(/^(\d{1,2})\s+([а-яё]+)(?:\s+(\d{4}))?$/);
     if (w) { const mi = MON.findIndex(x => new RegExp('^(' + x + ')').test(w[2]));
       if (mi >= 0) { const t = todayYmd(); let y = w[3] || t.slice(0, 4); let r = `${y}-${String(mi + 1).padStart(2, '0')}-${w[1].padStart(2, '0')}`;
-        if (!w[3] && r < t) r = `${Number(y) + 1}${r.slice(4)}`; return r; } } }   // без года и уже прошло — значит следующий год
+        return r; } } }
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/); if (m) return s;
   m = s.match(/^(\d{1,2})[.\/](\d{1,2})(?:[.\/](\d{2,4}))?$/);
   if (m) { const y = m[3] ? (m[3].length === 2 ? '20' + m[3] : m[3]) : todayYmd().slice(0, 4);
@@ -715,7 +720,7 @@ async function onWife(ctx, m, q, cfg) {
   if (st.await === 'wgsum') { const a = parseAmount(text); if (!a) return send(ctx, 'Напишите сумму числом, например <code>800000</code> 💕');
     await putSt(ctx, { await: 'wgdate', wg: { ...st.wg, amount: a.amount } });
     return send(ctx, '📅 <b>К какой дате?</b> Например: <code>20.12</code> 🌸', [[['↩️ Меню', 'wm']]]); }
-  if (st.await === 'wgdate') { const y = parseDate(text); if (!y) return send(ctx, 'Не поняла дату 🙈 Напишите, например, <code>20.12</code>');
+  if (st.await === 'wgdate') { const y = parseFuture(text); if (!y) return send(ctx, 'Не поняла дату 🙈 Напишите, например, <code>20.12</code>');
     const g = { ...st.wg, due: y }; await wInboxAdd(ctx, { kind: 'goal', name: g.name, amount: g.amount, due: y, chat: ctx.chat }); await putSt(ctx, {});
     await send(ctx, `🎀 <b>Отправила Наилю!</b>\n${esc(g.name)} — ${fmt(g.amount)} сум до ${dm(y)} ✨\nКак ответит — напишу сюда 💖`);
     return wifeMenu(ctx); }
@@ -1318,12 +1323,12 @@ async function draftText(ctx, cfg, st, m, text) {
     return reshow(ctx, st);
   }
   if (st.await === 'until' && st.d) {
-    const y = parseDate(text);
+    const y = parseFuture(text);
     if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>28.11</code>.');
     remember(st); st.d.until = y; return reshow(ctx, st);
   }
   if (st.await === 'book' && st.d) {
-    const y = parseDate(text);
+    const y = parseFuture(text);
     if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>28.11</code>.');
     remember(st); st.d.book = y; return reshow(ctx, st);
   }
@@ -1833,7 +1838,7 @@ async function onGoalText(ctx, cfg, st, text) {           // ответы тек
     return send(ctx, '🗓 К какой дате? Напишите, например, <code>31.12</code>.', [[['Без даты', 'gw']], [['↩️ Назад', 'gl:']]]);
   }
   if (st.await === 'gdate') {
-    const y = parseDate(text); if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>31.12</code>.', [[['Без даты', 'gw']]]);
+    const y = parseFuture(text); if (!y) return send(ctx, 'Не понял дату. Напишите, например, <code>31.12</code>.', [[['Без даты', 'gw']]]);
     return goalCreate(ctx, st.g.nw, y);
   }
 }
