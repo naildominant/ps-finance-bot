@@ -234,7 +234,7 @@ async function aiParse(ctx, cfg, dir, text) {
 "card_from": карта или null, "card_to": карта или null, "date": "YYYY-MM-DD"|null, "book": дата брони для предоплаты "YYYY-MM-DD"|null}]}
 Правила: сумма числом ("50к"=50000, "1,5 млн"=1500000, "миллион 800"=1800000, "полтора миллиона"=1500000). "$", "долларов", "бакс" → currency "$".
 Направление: личные траты (еда, кафе, плов, аптека, квартира, такси, одежда) — Личное; продажа игр, подписок, аккаунтов, поставщик, OLX — PS SHOP; аренда приставок PS5 — Аренда PS5; сайты, Leadex — Leadex. ${dir ? 'Если операция одна — направление ' + dir + '.' : ''} Не ясно — null.
-"пришло", "получил", "заплатили мне", "взял за" — Доход. В направлении Аренда PS5 "аренда 300к", "за аренду", "клиент заплатил" — Доход (категория Аренда / Оплата аренды), а расход аренды — только если сказано "потратил", "купил", "расход", "доставка", "реклама". "потратил", "купил", "заплатил", "поели", "расход" — Расход. Перевод между своими картами, снял наличные — "Между своими". "предоплата", "бронь", "забронировал" — "Предоплата". "залог" — "Залог". "вложил", "вложение", "купил для Leadex технику в долг" — "Вложение". Не уверен — null.
+"пришло", "получил", "заплатили мне", "взял за" — Доход. В направлении Аренда PS5 "аренда 300к", "за аренду", "клиент заплатил" — Доход (категория Аренда / Оплата аренды), а расход аренды — только если сказано "потратил", "купил", "расход", "доставка", "реклама". "потратил", "купил", "заплатил", "поели", "расход" — Расход. Перевод между своими картами, снял наличные — "Между своими". "перевёл брату", "брату", "на Арс", "доля брата" — "Между своими" (это перевод на карту брата Арс, НЕ расход). "предоплата", "бронь", "забронировал" — "Предоплата". "залог" — "Залог". "вложил", "вложение", "купил для Leadex технику в долг" — "Вложение". Не уверен — null.
 Нет суммы — amount null. Не уверен в категории — null, НЕ угадывай. Для расхода карта — card_from, для дохода — card_to.
 Дата: "вчера", "позавчера", "25 ноября" → YYYY-MM-DD, не сказано → null.
 Категории по направлениям:
@@ -306,7 +306,7 @@ function cardInText(cfg, text) {
   if (/\s(доллар|бакс|\$)/.test(t) && /налич|нал\b|кэш/.test(t)) return cfg.cards.find(c => c.name === 'Доллары') || null;
   if (/налич|\sнал(ом)?[\s.,!]|кэш/.test(t)) return cfg.cards.find(c => c.name === 'Нал') || null;
   if (/вклад/.test(t)) { const v = cfg.cards.find(c => /вклад/i.test(c.name)); if (v) return v; }
-  { const A = [[/главн/, 'Приёмка'], [/арендн/, 'Капитал'], [/ps\s*расход|пс\s*расход/, 'Расходка']];   // названия как в «Балансе» (владелец 27.11)
+  { const A = [[/главн/, 'Приёмка'], [/арендн/, 'Капитал'], [/ps\s*расход|пс\s*расход/, 'Расходка'], [/\sарс(у|а|е)?[\s.,!]/, 'Арс']];   // названия как в «Балансе» (владелец 27.11)
     for (const [re, w] of A) if (re.test(t)) { const v = cfg.cards.find(c => c.name.startsWith(w)); if (v) return v; } }
   if (/булк/.test(t)) { const v = cfg.cards.find(c => /^Булка/.test(c.name)); if (v) return v; }
   if (/(apple|эпл|эппл|эйпл)|\sузум/.test(t)) return cfg.cards.find(c => c.name === 'Apple Pay') || null;   // карта «Узум 9028» = Apple Pay (владелец 27.11)
@@ -377,6 +377,8 @@ async function askNext(ctx, cfg, st) {
     st.await = 'note'; await putSt(ctx, st);
     return void await send(ctx, '✍️ <b>Непредвиденные — что именно?</b> Напишите коротко, например <code>ремонт приставки</code>.', withBack());
   }
+  if (d.type === 'Между своими' && d.from && d.from === d.to) d.from = null;   // «с Арс на Арс» — ошибка разбора фото
+  if (d.type === 'Между своими' && /^Арс/.test(d.to || '') && !d.from) { const c = cardByWord(cfg, 'Капитал'); if (c) d.from = c.name; }   // брату — всегда с АРЕНДНОЙ (владелец 27.11, /claude №10)
   if (d.type === 'Между своими' && !d.from) return void await askCard(ctx, cfg, st, 'from', '💳 <b>С какой карты?</b>');
   if (d.type === 'Между своими' && !d.to) return void await askCard(ctx, cfg, st, 'to', '💳 <b>На какую карту?</b>');
   if (isOut(d.type) && !d.from) return void await askCard(ctx, cfg, st, 'from', '💳 С какой карты или наличными?');
@@ -977,6 +979,14 @@ async function rentShare(ctx, cfg) {
   return true;                                            // ждём ответ: дальше ничего не шлём (владелец 26.11)
 }
 // кнопки: перевёл в резерв / брату → с какой карты
+async function broPaid(ctx, cfg, mid, src, tgt) {          // перевод доли брату записан: АРЕНДНАЯ → Арс
+  const it = await store(ctx, { op: 'get', k: 'bro' });
+  if (!it || !it.amount) return edit(ctx, mid, 'Уже записано.');
+  const rid = await botRec(ctx, cfg, { dir: 'Аренда PS5', type: 'Между своими', amount: it.amount, from: src.name, to: tgt.name, comment: 'Доля брата 60% аренды' });
+  await store(ctx, { op: 'put', k: 'bro', v: { amount: 0 } });
+  await edit(ctx, mid, `✅ Записал перевод брату ${fmt(it.amount)}: АРЕНДНАЯ → 💪 АРС (${rid}).`, [[['🗑 Отменить', 'rm:' + rid]]]);
+  await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx);
+}
 async function onShares(ctx, q) {
   ctx.noTrack = true;
   const cfg = await config(ctx); const [k, id] = q.data.split(':'); const mid = q.message.message_id;
@@ -987,6 +997,7 @@ async function onShares(ctx, q) {
     const tgt = k === 'rsv' ? cfg.cards.find(c => /вклад/i.test(c.name)) : cardByWord(cfg, 'Арс');
     const amt = k === 'rsv' ? ((await store(ctx, { op: 'get', k: 'res:' + id })) || {}).amount : ((await store(ctx, { op: 'get', k: 'bro' })) || {}).amount;
     if (!amt || !tgt) return edit(ctx, mid, 'Сумма не найдена или уже записана.');
+    if (k === 'bro') { const src = cardByWord(cfg, 'Капитал'); if (src) return broPaid(ctx, cfg, mid, src, tgt); }   // брату — всегда с АРЕНДНОЙ (владелец 27.11, /claude №10)
     const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.name !== tgt.name && c.cur === 'сум');
     return edit(ctx, mid, `С какой карты перевели ${fmt(amt)} на «${tgt.name}»?`, chunk(cardSort(list).map(({ c, i }) => [cardLabel(c), `${k}f:${id}|${i}`]), 2));
   }
@@ -1145,6 +1156,9 @@ function draftFrom(cfg, dir, p, text, single) {
   { const m = lowp.match(/(?:^|\s)с\s+(.+?)\s+на\s+(.+)$/);   // «с X на Y» — карты по местам
     if (m && (d.type === 'Между своими' || !d.type)) { const a = cardInText(cfg, m[1]), b = cardInText(cfg, m[2]); if (a && b && a !== b) { d.type = 'Между своими'; d.dir = d.dir || 'Личное'; cf = a; ct = b; } } }
   if (!cf && !ct && d.type !== 'Между своими') cf = ct = cardInText(cfg, piece);
+  if (/(перев[её]л|скинул|отправил|кинул)[а-я]*\s+(брату|арсу|на\s+арс)|доля\s+брата/.test(lowp)) {   // брату: АРЕНДНАЯ → Арс (владелец 27.11, /claude №10)
+    d.type = 'Между своими'; d.dir = 'Аренда PS5'; cf = cardByWord(cfg, 'Капитал'); ct = cardByWord(cfg, 'Арс'); d.group = d.cat = null; }
+  if (d.type === 'Между своими' && ct && /^Арс/.test(ct.name) && (!cf || cf === ct)) cf = cardByWord(cfg, 'Капитал');   // фото «карта 8350» → с АРЕНДНОЙ
   if (d.type === 'Между своими') { if (cf) d.from = cf.name; if (ct) d.to = ct.name; }
   if (isIn(d.type)) d.to = ok(ct) || ok(cf);
   if (isOut(d.type)) d.from = ok(cf) || ok(ct);
