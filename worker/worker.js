@@ -1385,7 +1385,7 @@ async function debtRows(ctx, cfg) {                         // кнопки до
   const b = await rentDue(ctx, cfg); if (b > 0) rows.push([[`💪 Брат: ${fmt(b)}`, 'dbro']]);   // 💪 — выбор владельца (27.11)
   const p = await supDue(ctx);   // «Позже» — только «есть долг», без суммы, пока рубли не вписаны (владелец 27.11)
   if (await store(ctx, { op: 'get', k: 'supUnknown' })) rows.push([['🧾 Поставщик: есть долг', 'dsup']]);
-  else if (p > 0) rows.push([[`🧾 Поставщику: ${fmt(p)}`, 'dsup']]);   // /claude №8
+  else if (p > 0) { const { top } = await supNums(ctx); rows.push([[top ? `🧾 Поставщику: ${fmt(p)}` : '🧾 Поставщику: ✅', 'dsup']]); }   // /claude №8; на карте хватает → ✅ (владелец 27.11)
   return rows;
 }
 async function startScreen(ctx) {
