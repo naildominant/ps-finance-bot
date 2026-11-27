@@ -2163,6 +2163,10 @@ async function handle(ctx, upd) {
   ctx.chat = (m && m.chat.id) || (q && q.message.chat.id);
   const cfg = await config(ctx);
   if (m && /group/.test(m.chat.type || '')) {             // рабочая группа с братом: бот только пишет туда; привязка — /group от владельца
+    if (cfg.owners.includes(String(from.id)) && /^\/(leadex|лидекс)(@\w+)?$/i.test(m.text || '')) {   // рабочая группа с Ришатом (владелец 28.11)
+      await store(ctx, { op: 'put', k: 'leadexGroup', v: m.chat.id });
+      return tg(ctx, 'sendMessage', { chat_id: m.chat.id, text: premium('✅ <b>Группа LEADEX подключена.</b>\nСюда буду писать события LEADEX.'), parse_mode: 'HTML' });
+    }
     if (cfg.owners.includes(String(from.id)) && /^\/(group|группа)(@\w+)?$/i.test(m.text || '')) {
       await store(ctx, { op: 'put', k: 'rentGroup', v: m.chat.id });
       return tg(ctx, 'sendMessage', { chat_id: m.chat.id, text: premium('✅ <b>Группа аренды подключена.</b>\nСюда буду писать: новые клиенты, оплаты, залоги, возвраты, расходы и долю брата.'), parse_mode: 'HTML' });
