@@ -44,7 +44,7 @@ const kb = rows => ({ inline_keyboard: rows.map(r => r.map(([text, data, style])
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1OXZEt2YRwHJmy8QZtCH3rZMNgaVyW5d5u7tsKONrmgU/edit';
 const RENT_URL = 'https://docs.google.com/spreadsheets/d/1G9NgWFPksCyinTU7_QARySUJwyEFzW6cJdNRxb3xIKo/edit';   // «PS Аренда» — только аренда, брату (владелец 27.11)
 const send = async (ctx, text, rows) => {
-  if (ctx.wife && rows) rows = rows.map(r => r.filter(([t, d]) => !/^(ed|fx:|rm:)/.test(d || '')).map(([t, d, st]) => [t, /^(d:\d|st0|menu)$/.test(d || '') ? 'wm' : d, st])).filter(r => r.length);   // жене: без правки/удаления   // жена: «Назад» → её меню
+  if ((ctx.wife || ctx.rishat) && rows) rows = rows.map(r => r.filter(([t, d]) => !/^(ed|fx:|rm:)/.test(d || '')).map(([t, d, st]) => [t, /^(d:\d|st0|menu)$/.test(d || '') ? (ctx.rishat ? 'xm' : 'wm') : d, st])).filter(r => r.length);   // жене и Ришату: без правки/удаления   // жена: «Назад» → её меню
   if (ctx.viewer && rows) rows = rows.map(r => r.map(([t, d, st]) => [t, /^(d:\d|bk|st0|menu)$/.test(d || '') ? 'vm' : d, st]));   // брат: назад → меню аренды
   if (ctx.editMid) {                                       // «Назад»: экран меняется на месте, без анимации удаления (владелец 26.11)
     const mid = ctx.editMid; ctx.editMid = null;
@@ -60,7 +60,7 @@ const send = async (ctx, text, rows) => {
 const unkb = (ctx, mid) => tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } }).catch(() => {});   // убрать кнопки, сообщение оставить
 const gone = (ctx, mid) => tg(ctx, 'deleteMessage', { chat_id: ctx.chat, message_id: mid }).catch(() => {});
 async function purge(ctx) {
-  if (ctx.wife) return;                                   // у жены свой чат — общий «след» владельца не трогаем
+  if (ctx.wife || ctx.rishat) return;                     // у жены и Ришата свой чат — общий «след» владельца не трогаем
   const ids = [...((await store(ctx, { op: 'get', k: 'trail' })) || []), ...(ctx.trail || [])].filter(i => !(ctx.keep || []).includes(i) && i !== ctx.editMid);
   if (ctx.trail) ctx.trail.length = 0;
   await store(ctx, { op: 'put', k: 'trail', v: [] });
@@ -69,7 +69,7 @@ async function purge(ctx) {
 // История видна: при нажатии кнопки старый текст сообщения не стирается, ответ дописывается снизу («👉 …»)
 const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const edit = (ctx, mid, text, rows) => {
-  if (ctx.wife && rows) rows = rows.map(r => r.filter(([t, d]) => !/^(ed|fx:|rm:)/.test(d || ''))).filter(r => r.length);   // жене: без правки/удаления
+  if ((ctx.wife || ctx.rishat) && rows) rows = rows.map(r => r.filter(([t, d]) => !/^(ed|fx:|rm:)/.test(d || ''))).filter(r => r.length);   // жене и Ришату: без правки/удаления
   if (ctx.orig && mid === ctx.origMid) text = esc(ctx.orig) + '\n\n👉 ' + text;
   return tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: mid, text: premium(text), parse_mode: 'HTML', ...(rows ? { reply_markup: kb(rows) } : {}) });
 };
@@ -98,6 +98,7 @@ async function config(ctx, force) {
       inc: String(r[10] || '').split(',').map(x => x.trim()).filter(Boolean), exp: String(r[11] || '').split(',').map(x => x.trim()).filter(Boolean) })),
     owners: sets.values.filter(r => /Telegram ID: Наиль/.test(r[0])).map(r => String(r[1])).filter(Boolean),
     viewers: sets.values.filter(r => /Telegram ID: брат/i.test(r[0])).map(r => String(r[1])).filter(Boolean),   // брат: только смотрит аренду (27.11)
+    rishat: sets.values.filter(r => /Telegram ID: Ришат/i.test(r[0])).map(r => String(r[1])).filter(Boolean),   // Ришат: только LEADEX (задача 24)
     wife: sets.values.filter(r => /Telegram ID: жена/i.test(r[0])).map(r => String(r[1])).filter(Boolean),   // жена: личные расходы, цели без «Сюрприза», BULKA (задача 25)
     viewersTest: sets.values.filter(r => /Telegram ID: брат \(тест\)/i.test(r[0])).map(r => String(r[1])).filter(Boolean),   // пока есть тестовый — лично пишем только ему
   };
@@ -376,6 +377,7 @@ function summary(d) {
 
 // Чего не хватает → спросить. Возвращает true, если всё заполнено.
 async function askNext(ctx, cfg, st) {
+  if (ctx.rishat && st.d) { const d = st.d; d.dir = 'Leadex'; d.type = 'Расход'; d.from = RISHAT_SRC; d.to = null; d.edit = null; }   // Ришат: только расходы LEADEX своими деньгами
   if (ctx.wife && st.d) { const d = st.d, b = cardByWord(cfg, 'Булка'); d.dir = 'Личное'; if (d.type !== 'Расход') { d.type = 'Расход'; } d.from = b ? b.name : d.from; d.to = null; d.edit = null; }   // жена: только траты с BULKA
   const d = st.d;
   if (!d.dir) { st.await = null; await putSt(ctx, st);
@@ -482,7 +484,7 @@ const CAT_STYLE = { 'Игры PS5': 'success', 'Игры PS4': 'primary', 'GTA 6
   'OLX': 'success', 'Instagram': 'danger', 'Telegram': 'primary', 'Непредвиденные': 'danger' };
 const LOGO_STICKER = 'CAACAgEAAxkBAAIDUGsIoKXIO1jH-DR_xAZ2lhxDC9CUAAJ9AgAC3xnYRkWrScNxc61zPQQ';   // 💰 анимированный (27.11); прежнее лого: CAACAgIAAxkBAAIDPGsIn6xPb-Yt094Hbyt2vygJSQOXAAJNrAACXoTAS9-7y8vi2swfPQQ   // лого на экране СТАРТ
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
-const dirMenu = async ctx => { if (ctx.wife) return wifeStart(ctx); await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['🎯 Цели', 'gl:', 'primary'], ['🔄 Перевод', 'tr', 'primary']], ...await wifeRow(ctx), [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };
+const dirMenu = async ctx => { if (ctx.rishat) return rishatStart(ctx); if (ctx.wife) return wifeStart(ctx); await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['🎯 Цели', 'gl:', 'primary'], ['🔄 Перевод', 'tr', 'primary']], ...await wifeRow(ctx), [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };
 async function wifeRow(ctx) { let n = 0; try { n = await wInboxCount(ctx); } catch (e) {} return [[[`👩 Запросы жены${n ? ' (' + n + ')' : ''}`, 'wi']]]; }   // долги и «Назад» → СТАРТ (владелец 26.11)
 
 // ---------- Запись в таблицу ----------
@@ -501,7 +503,7 @@ async function save(ctx, cfg, d) {
   const hhmm = d.time || nowT().toISOString().slice(11, 16);
   const when = Date.parse(d.date + 'T' + hhmm + ':00Z') - TZ_MS;
   const from = isIn(d.type) ? '' : d.from || '', to = isOut(d.type) ? '' : d.to || '';
-  const row = (id) => [id, { d: when }, ctx.wife ? 'Жена' : 'Наиль', d.dir, d.type, d.group || '', d.cat || '', uzs, usdAmt, rate, from, to, 'ок', d.src || 'текст', d.comment || '', d.ord && d.ord !== 'new' ? d.ord : ''];
+  const row = (id) => [id, { d: when }, ctx.wife ? 'Жена' : ctx.rishat ? 'Ришат' : 'Наиль', d.dir, d.type, d.group || '', d.cat || '', uzs, usdAmt, rate, from, to, 'ок', d.src || 'текст', d.comment || '', d.ord && d.ord !== 'new' ? d.ord : ''];
   if (d.edit) {
     const [f] = await gas(ctx, [{ op: 'find', sheet: 'Журнал', col: 'A', value: d.edit }]);
     if (!f.row) throw new Error('не нашёл запись ' + d.edit);
@@ -764,6 +766,7 @@ async function wifeText(ctx, cfg, st, m, text) {
 }
 async function wifeEvent(ctx, d, id) {
   const cfg = await config(ctx), money = d.cur === '$' ? '$' + fmt(d.amount) : fmt(d.amount) + ' сум';
+  if (ctx.rishat) { for (const o of cfg.owners) await tg(ctx, 'sendMessage', { chat_id: o, parse_mode: 'HTML', text: premium(`🍥 <b>Ришат записал:</b> ${esc(d.cat || d.group || d.type)} — ${money} (своими, ${id})`) }).catch(() => {}); return; }   // В1: владельцу сообщение
   if (d.type === 'Между своими' && /вклад/i.test(d.to || '') && nowT().getUTCHours() >= 16)   // после 16:00 (владелец 28.11)
     await send(ctx, '⏰ <b>После 16:00</b> — проценты по вкладу пойдут с завтра.');
   if (ctx.wife) { await wInboxAdd(ctx, { kind: 'spent', text: `${d.type === 'Между своими' ? 'На вклад' : (d.cat || d.group || d.type)} — ${money} (${id})`, seen: false, done: true }); return; }   // в ящик, без сообщения
@@ -797,6 +800,114 @@ async function onWifeReq(ctx, cfg, k, v, mid) {          // владелец о�
   x.done = id; await store(ctx, { op: 'put', k: 'wreq', v: R });
   await tg(ctx, 'sendMessage', { chat_id: x.chat, parse_mode: 'HTML', text: premium(`✅ <b>Наиль перевёл ${fmt(x.amount)} сум</b> на BULKA CARD — ${esc(x.what)}.`) }).catch(() => {});
   return edit(ctx, mid, `✅ Записал перевод ${fmt(x.amount)}: ${cardLabel(src)} → 🥖 BULKA CARD (${id}). Жене сообщил.`, [[['🗑 Отменить', 'rm:' + id]]]);
+}
+// ---------- Ришат (задача 24, владелец 28.11): только LEADEX, аниме-стиль ----------
+// записывает расходы LEADEX своими деньгами (Откуда = «Ришат (свои)», карты владельца не трогаются) → вернутся ему из поступления до 50/50;
+// видит доходы, расходы (кто платил), фонд, свою долю, вложения Наиля; «Нужно вложение» → владельцу ✅ (с какой карты) / ❌.
+const RISHAT_SRC = 'Ришат (свои)';
+const RISHAT_OK = ['ok', 'no', 'g', 's', 'dt', 'bk', 'cd', 'noop'];
+async function lxNotify(ctx, text) {                     // группа LEADEX + лично Ришату (только поступления с долями и переводы — В5)
+  const cfg = await config(ctx);
+  if (ctx.dry) { ctx.out.push({ method: 'LXGROUP', text }); for (const r of cfg.rishat || []) ctx.out.push({ method: 'RISHAT ' + r, text }); return; }
+  const gid = await store(ctx, { op: 'get', k: 'leadexGroup' });
+  if (gid) await tg(ctx, 'sendMessage', { chat_id: gid, text: premium(text), parse_mode: 'HTML' }).catch(() => {});
+  for (const r of cfg.rishat || []) await tg(ctx, 'sendMessage', { chat_id: r, text: premium(text), parse_mode: 'HTML' }).catch(() => {});
+}
+async function lxNums(ctx) {
+  const [j, dl, debt] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: 'A2:P3000' }, { op: 'get', sheet: 'Доли', range: 'A6:J500' }, { op: 'get', sheet: 'Долги и накопления', range: 'C6:F6' }]);
+  const J = j.values.filter(r => r[0] && r[12] !== 'удалено' && r[3] === 'Leadex' && r[1] && r[1].d);
+  const D = dl.values.filter(r => r[1]);
+  const sum = (a, i) => a.reduce((s, r) => s + (Number(r[i]) || 0), 0);
+  const inv = debt.values[0] || [];
+  return { J, fund: sum(D, 4), share: sum(D, 7), back: sum(D, 9), invTotal: Number(inv[0]) || 0, invBack: Number(inv[2]) || 0, invLeft: Number(inv[3]) || 0,
+    owed: J.filter(r => r[4] === 'Расход' && r[10] === RISHAT_SRC && r[1].d > 0).reduce((s, r) => s + (Number(r[7]) || 0), 0) - sum(D, 9) };
+}
+async function rishatStart(ctx) {
+  await putSt(ctx, {});
+  let t = ''; try { const n = await lxNums(ctx);
+    t = `\n\n🏦 Фонд LEADEX: <b>${fmt(n.fund)}</b>\n⚔️ Твоя доля всего: <b>${fmt(n.share)}</b>` + (n.owed > 0 ? `\n💴 Вернуть тебе (твои расходы): <b>${fmt(n.owed)}</b>` : ''); } catch (e) {}
+  return send(ctx, `🍥 <b>Йо, Ришат-сан!</b> ⚡️${t}`, [[['🌀 Меню', 'xm', 'primary']]]);
+}
+async function rishatMenu(ctx) {
+  await putSt(ctx, {});
+  return send(ctx, '⛩ <b>LEADEX</b> — выбирай миссию ✨', [[['⚔️ Записать расход', 'xe', 'danger']], [['📈 Доходы', 'xi'], ['📉 Расходы', 'xo']],
+    [['🏦 Фонд', 'xf'], ['💰 Моя доля', 'xd']], [['💼 Вложения Наиля', 'xv']], [['🙏 Нужно вложение', 'xq', 'primary']]]);
+}
+async function rishatList(ctx, T) {
+  const n = await lxNums(ctx), ym = todayYmd().slice(0, 7), [y, mo] = ym.split('-').map(Number);
+  const recs = n.J.filter(r => r[4] === T && ymdT(new Date(r[1].d + TZ_MS)).startsWith(ym)).sort((a, b) => b[1].d - a[1].d);
+  const L = [`${T === 'Доход' ? '📈 <b>Доходы' : '📉 <b>Расходы'} LEADEX за ${MONTHS[mo - 1].toLowerCase()} ${y}</b>`, ''];
+  let tot = 0;
+  for (const r of recs) { tot += Number(r[7]) || 0;
+    L.push(`${dm(ymdT(new Date(r[1].d + TZ_MS)))} · ${esc(r[6] || r[5] || '')} — <b>${fmt(Number(r[7]) || 0)}</b>` + (T === 'Расход' ? (r[10] === RISHAT_SRC ? ' · 🍥 ты' : ' · 👤 Наиль') : '')); }
+  if (!recs.length) L.push('Пока пусто 🍃');
+  L.push('━━━━━━━━━━', `<b>Всего: ${fmt(tot)} сум</b>`);
+  return send(ctx, L.join('\n'), [[['↩️ Меню', 'xm']]]);
+}
+async function onRishat(ctx, m, q, cfg) {
+  ctx.trail = []; ctx.noTrack = true;
+  if (q) {
+    await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
+    const [k, v] = q.data.split(':'); const mid = q.message.message_id;
+    if (['xm', 'xi', 'xo', 'xf', 'xd', 'xv', 'xe', 'xq'].includes(k)) await gone(ctx, mid);
+    if (k === 'xm') return rishatMenu(ctx);
+    if (k === 'xi') return rishatList(ctx, 'Доход');
+    if (k === 'xo') return rishatList(ctx, 'Расход');
+    if (k === 'xf' || k === 'xd' || k === 'xv') {
+      const n = await lxNums(ctx);
+      const t = k === 'xf' ? `🏦 <b>Фонд LEADEX</b>\n\nНакоплено: <b>${fmt(n.fund)} сум</b> ✨\n<i>20% от каждого поступления</i>`
+        : k === 'xd' ? `💰 <b>Твоя доля</b> ⚔️\n\nНачислено 50%: <b>${fmt(n.share)}</b>\nВозвращено твоих расходов: <b>${fmt(n.back)}</b>` + (n.owed > 0 ? `\nЕщё вернуть тебе: <b>${fmt(n.owed)}</b> 💴` : '')
+        : `💼 <b>Вложения Наиля в LEADEX</b>\n\nВложено: <b>${fmt(n.invTotal)}</b>\nВернулось: <b>${fmt(n.invBack)}</b>\nОсталось вернуть: <b>${fmt(n.invLeft)}</b>\n<i>Возвращается 20% каждого поступления</i>`;
+      return send(ctx, t, [[['↩️ Меню', 'xm']]]);
+    }
+    if (k === 'xe') { await putSt(ctx, { dir: 'Leadex', ptype: 'Расход' });
+      return send(ctx, '⚔️ <b>Пиши расход</b> — текстом или фото чека.\nНапример: <code>реклама 200000</code> 🍥', [[['↩️ Меню', 'xm']]]); }
+    if (k === 'xq') { await putSt(ctx, { await: 'xqsum' });
+      return send(ctx, '🙏 <b>Сколько нужно вложить?</b> Напиши сумму, например <code>500000</code>', [[['↩️ Меню', 'xm']]]); }
+    if (!RISHAT_OK.includes(k)) return;
+    return onCallback(ctx, q, true);
+  }
+  const text = (m.text || '').trim();
+  if (/^\/start(@\w+)?$/i.test(text) && USER_WIPE && !ctx.dry) await wipeChat(ctx, m, 'wipeFrom:' + ctx.chat);
+  if (/^\/start(@\w+)?$/i.test(text)) return rishatStart(ctx);
+  if (/^\/menu(@\w+)?$/i.test(text) || /^(отмена|стоп|меню)$/i.test(text) || /^\//.test(text)) return rishatMenu(ctx);
+  const st = await getSt(ctx);
+  if (st.await === 'xqsum') { const a = parseAmount(text); if (!a) return send(ctx, 'Напиши сумму числом, например <code>500000</code>');
+    await putSt(ctx, { await: 'xqwhat', xq: a.amount }); return send(ctx, `🙏 ${fmt(a.amount)} сум — <b>на что?</b> Коротко, например <code>реклама на декабрь</code>`, [[['↩️ Меню', 'xm']]]); }
+  if (st.await === 'xqwhat' && text) {
+    const R = (await store(ctx, { op: 'get', k: 'xreq' })) || { _n: 0 }; const rid = 'X' + (++R._n);
+    R[rid] = { id: rid, amount: st.xq, what: text.slice(0, 100), chat: ctx.chat, at: Date.now(), done: false }; await store(ctx, { op: 'put', k: 'xreq', v: R });
+    for (const o of cfg.owners) await tg(ctx, 'sendMessage', { chat_id: o, parse_mode: 'HTML', text: premium(`🍥 <b>Ришат просит вложение в LEADEX: ${fmt(st.xq)} сум</b>\nНа что: ${esc(text.slice(0, 100))}`),
+      reply_markup: kb([[['✅ Вложил', 'xy:' + rid, 'success'], ['❌ Нет', 'xn:' + rid, 'danger']]]) }).catch(() => {});
+    await send(ctx, `🙏 Отправил Наилю: ${fmt(st.xq)} сум — ${esc(text.slice(0, 100))}. Ответ придёт сюда ✨`);
+    return rishatStart(ctx);
+  }
+  if (m.voice || m.audio || m.video_note) {
+    const f = m.voice || m.audio || m.video_note; const said = await transcribe(ctx, await tgFile(ctx, f.file_id)).catch(() => '');
+    if (!said) return send(ctx, '🎤 Не расслышал, повтори или напиши текстом 🙏');
+    await send(ctx, '🎤 ' + esc(said)); return onRishat(ctx, { ...m, voice: null, audio: null, video_note: null, text: said }, null, cfg);
+  }
+  const img = m.photo ? m.photo[m.photo.length - 1] : null;
+  if (img) { await send(ctx, '📷 Читаю чек…'); const seen = await readReceipt(ctx, await tgFile(ctx, img.file_id));
+    if (!seen) return send(ctx, '📷 Не смог прочитать. Напиши текстом, например <code>реклама 200000</code>');
+    ctx.ptype = 'Расход'; return startDraft(ctx, cfg, 'Leadex', (m.caption ? m.caption + '. ' : '') + seen, 'фото'); }
+  if (!text) return;
+  if (st.d && st.await) return draftText(ctx, cfg, st, m, text);
+  ctx.ptype = 'Расход'; return startDraft(ctx, cfg, 'Leadex', text, 'текст');
+}
+async function onRishatReq(ctx, cfg, k, v, mid) {         // владелец: «Нужно вложение» от Ришата → ✅ (с какой карты) / ❌
+  const R = (await store(ctx, { op: 'get', k: 'xreq' })) || {}; const [rid, ci] = v.split('|'); const x = R[rid];
+  if (!x || x.done) return edit(ctx, mid, 'Этот запрос уже закрыт.');
+  if (k === 'xn') { x.done = 'нет'; await store(ctx, { op: 'put', k: 'xreq', v: R });
+    await tg(ctx, 'sendMessage', { chat_id: x.chat, parse_mode: 'HTML', text: premium(`🙅 Наиль: вложение ${fmt(x.amount)} сейчас не делаем (${esc(x.what)}).`) }).catch(() => {});
+    return edit(ctx, mid, `❌ Отказ по вложению ${fmt(x.amount)}. Ришату сообщил.`); }
+  if (k === 'xy') { const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.cur === 'сум' && !/^Арс|^Булка|^Вклад жены/i.test(c.name));
+    return edit(ctx, mid, `💼 Вложение ${fmt(x.amount)} — ${esc(x.what)}\n<b>С какой карты?</b>`, chunk(cardSort(list).map(({ c, i }) => [cardLabel(c), `xyf:${rid}|${i}`]), 2)); }
+  const src = cfg.cards[+ci]; if (!src) return edit(ctx, mid, 'Карта не найдена.');
+  const id = await botRec(ctx, cfg, { dir: 'Leadex', type: 'Вложение', cat: 'Вложение', amount: x.amount, from: src.name, comment: `Вложение по просьбе Ришата: ${x.what}` });
+  x.done = id; await store(ctx, { op: 'put', k: 'xreq', v: R });
+  await tg(ctx, 'sendMessage', { chat_id: x.chat, parse_mode: 'HTML', text: premium(`✅ <b>Наиль вложил ${fmt(x.amount)} сум</b> — ${esc(x.what)} ⚡️`) }).catch(() => {});
+  return edit(ctx, mid, `✅ Записал вложение ${fmt(x.amount)} с ${cardLabel(src)} (${id}). Ришату сообщил.`, [[['🗑 Отменить', 'rm:' + id]]]);
 }
 async function onTool(ctx, q) {
   const cfg = await config(ctx);
@@ -983,7 +1094,9 @@ async function leadexSplit(ctx, cfg, id, amount) {
   ctx.noTrack = true;
   const last = (await store(ctx, { op: 'get', k: 'lxLast' })) || 0;
   const [j, debt] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: 'A2:M3000' }, { op: 'get', sheet: 'Долги и накопления', range: 'F6' }]);
-  const exp = j.values.filter(r => r[3] === 'Leadex' && r[4] === 'Расход' && r[12] !== 'удалено' && r[1] && r[1].d > last).reduce((a, r) => a + (Number(r[7]) || 0), 0);
+  const lxRows = j.values.filter(r => r[3] === 'Leadex' && r[4] === 'Расход' && r[12] !== 'удалено' && r[1] && r[1].d > last);
+  const exp = lxRows.reduce((a, r) => a + (Number(r[7]) || 0), 0);
+  const rback = lxRows.filter(r => r[10] === RISHAT_SRC).reduce((a, r) => a + (Number(r[7]) || 0), 0);   // свои деньги Ришата — вернуть ему до 50/50 (задача 24, В3)
   const invLeft = Math.max(0, Number(debt.values[0][0]) || 0);
   const fund = Math.round(amount * 0.2);
   const ret = Math.min(Math.round(amount * 0.2), invLeft);
@@ -991,7 +1104,7 @@ async function leadexSplit(ctx, cfg, id, amount) {
   const over = exp > pool;
   const rest = over ? 0 : pool - exp;
   const half = Math.round(rest / 2);
-  const x = { id, amount, exp, fund, ret, invLeft, rest, nail: half, rishat: rest - half, over, at: Date.now() };
+  const x = { id, amount, exp, fund, ret, invLeft, rest, nail: half, rishat: rest - half, rback, over, at: Date.now() };
   await store(ctx, { op: 'put', k: 'lx:' + id, v: x });
   const L = [`💼 <b>LEADEX: пришло ${fmt(amount)} сум</b> (${id})`,
     `Расходы LEADEX с прошлого поступления: ${fmt(exp)}`, '',
@@ -999,6 +1112,10 @@ async function leadexSplit(ctx, cfg, id, amount) {
     ret ? `• Возврат вложений вам: <b>${fmt(ret)}</b> (останется вернуть ${fmt(invLeft - ret)})` : '• Вложения уже возвращены',
     over ? `⚠️ Расходы (${fmt(exp)}) больше, чем осталось на них (${fmt(pool)}). Долей в этот раз нет.\n💰 <b>Нужно вложить: ${fmt(exp - pool)}</b> — запишу как вложение, оно вернётся вам из следующих поступлений (20%).`
          : `• Расходы покрыты: ${fmt(exp)}\n• Вам 50%: <b>${fmt(half)}</b>\n• Ришату 50%: <b>${fmt(rest - half)}</b> → карта Ришата (не выбрана)`];
+  if (rback) L.push(`• Вернуть Ришату его расходы: <b>${fmt(rback)}</b> (платил своими)`, `💸 <b>Ришату всего: ${fmt((over ? 0 : rest - half) + rback)}</b>`);
+  await lxNotify(ctx, [`🍥 <b>LEADEX: пришло ${fmt(amount)} сум</b>`, `🏦 Фонд 20%: ${fmt(fund)}`, ret ? `↩️ Возврат вложений Наилю: ${fmt(ret)}` : null,
+    `🧾 Расходы покрыты: ${fmt(over ? pool : exp)}`, over ? `⚠️ Расходы больше 60% — долей нет, Наиль докладывает ${fmt(exp - pool)}` : `⚔️ Наилю 50%: ${fmt(half)}\n⚔️ Ришату 50%: ${fmt(rest - half)}`,
+    rback ? `💴 Ришату вернуть его расходы: ${fmt(rback)}` : null].filter(Boolean).join('\n')).catch(() => {});
   x.short = over ? exp - pool : 0; await store(ctx, { op: 'put', k: 'lx:' + id, v: x });
   const kb = [[['✅ Перевёл', 'lxok:' + id], ['Позже', 'lxno:' + id]]];
   if (over) kb.push([['💰 Вложил ' + fmt(x.short), 'lxin:' + id]]);
@@ -1030,10 +1147,11 @@ async function onLeadex(ctx, q) {
   const recs = [];
   if (x.ret) recs.push(await botRec(ctx, cfg, { dir: 'Leadex', type: 'Возврат вложений', cat: 'Возврат вложений Leadex', amount: x.ret, comment: 'Возврат вложений из ' + id }));
   if (x.nail) recs.push(await botRec(ctx, cfg, { dir: 'Личное', type: 'Доход', group: 'Доля из Leadex (50%)', cat: 'Доля из Leadex (50%)', amount: x.nail, comment: 'Доля из ' + id }));
-  await gas(ctx, [{ op: 'append', sheet: 'Доли', row: [{ d: Date.now() }, id, x.amount, x.over ? 0 : x.exp, x.fund, x.ret, x.nail, x.rishat, x.over ? 'расходы > 60%, доли не начислены, нехватка → вложение' : 'отмечено'] }]);
+  await gas(ctx, [{ op: 'append', sheet: 'Доли', row: [{ d: Date.now() }, id, x.amount, x.over ? 0 : x.exp, x.fund, x.ret, x.nail, x.over ? 0 : x.rishat, x.over ? 'расходы > 60%, доли не начислены, нехватка → вложение' : 'отмечено', x.rback || 0] }]);   // J — возврат Ришату его расходов
   x.done = true; await store(ctx, { op: 'put', k: 'lx:' + id, v: x });
   if (!ctx.dry) await store(ctx, { op: 'put', k: 'lxLast', v: Date.now() });
   await edit(ctx, mid, `✅ Отмечено. ${recs.length ? 'Записал: ' + recs.join(', ') + '. ' : ''}Таблица «Доли» обновлена.`);
+  if ((x.rishat || 0) + (x.rback || 0) > 0) await lxNotify(ctx, `💸 <b>Ришату переведено: ${fmt((x.over ? 0 : x.rishat) + (x.rback || 0))} сум</b>${x.rback ? ` (доля ${fmt(x.over ? 0 : x.rishat)} + его расходы ${fmt(x.rback)})` : ''} ✨`).catch(() => {});
   await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx);
 }
 
@@ -1121,12 +1239,12 @@ async function rentInvScreen(ctx, cfg) {
   const L = ['💼 <b>Вложения брата в аренду</b>', '',
     `💰 Вложено: <b>$${fmt(s.inv.usd)}</b>`, `✅ Вернулось: <b>$${fmt(Math.min(s.back, s.inv.usd))}</b> (${fmt(s.ars)} сум на Арс)`,
     s.left > 0 ? `⏳ Осталось: <b>$${fmt(s.left)}</b> (${Math.round((s.inv.usd - s.left) / s.inv.usd * 100)}%)` : '🎉 Вернулось полностью', '',
-    ctx.viewer ? 'Доли: <b>вам 60%</b>, Наилю 40%.' : 'Доли: брату 60%, вам 40%.'];
+    ctx.viewer ? 'Доли: <b>тебе 60%</b>, Наилю 40%, брат.' : 'Доли: брату 60%, вам 40%.'];
   { const J = await journal(ctx), ars = cardByWord(cfg, 'Арс');
     const inc = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Доход').reduce((a, x) => a + x.uzs, 0), exp = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Расход').reduce((a, x) => a + x.uzs, 0);
     const paid = ars ? J.filter(x => x.type === 'Между своими' && x.to === ars.name).reduce((a, x) => a + x.uzs, 0) : 0, owe = Math.round(rentSplit(s.inv, inc - exp).bro);
-    L.push('', ctx.viewer ? '💪 <b>Ваша доля по аренде</b> (с 26.11)' : '👤 <b>Брату по аренде</b> (с 26.11)', `Прибыль: ${fmt(inc - exp)}`, `${ctx.viewer ? 'Положено вам' : 'Положено брату'}: ${fmt(owe)}`, `${ctx.viewer ? 'Переведено вам' : 'Отдано'}: ${fmt(paid)}`,
-      owe - paid > 0 ? (ctx.viewer ? `⏳ К переводу вам: <b>${fmt(owe - paid)}</b>` : `❗ Должен брату: <b>${fmt(owe - paid)}</b>`) : (ctx.viewer ? '✅ Всё переведено' : '✅ Брату ничего не должен')); }
+    L.push('', ctx.viewer ? '💪 <b>Твоя доля по аренде, брат</b> (с 26.11)' : '👤 <b>Брату по аренде</b> (с 26.11)', `Прибыль: ${fmt(inc - exp)}`, `${ctx.viewer ? 'Положено тебе' : 'Положено брату'}: ${fmt(owe)}`, `${ctx.viewer ? 'Переведено тебе' : 'Отдано'}: ${fmt(paid)}`,
+      owe - paid > 0 ? (ctx.viewer ? `⏳ К переводу тебе: <b>${fmt(owe - paid)}</b>` : `❗ Должен брату: <b>${fmt(owe - paid)}</b>`) : (ctx.viewer ? '✅ Всё переведено' : '✅ Брату ничего не должен')); }
   return send(ctx, L.join('\n'), [[['↩️ Назад', 'd:1']]]);
 }
 // ---------- Брат и рабочая группа (задача по аренде, владелец 27.11) ----------
@@ -1141,7 +1259,7 @@ async function rentNotify(ctx, text, broText) {        // событие аре�
   const cfg = await config(ctx);
   const bros = (cfg.viewersTest && cfg.viewersTest.length) ? cfg.viewersTest : (cfg.viewers || []);   // пока проверяем — только тестовому
   let tail = ''; try { const o = await rentOwe(ctx, cfg); tail = `\n\n💪 Брату: ${o.due > 0 ? 'к переводу <b>' + fmt(o.due) + '</b>' : 'всё переведено ✅'}`; } catch (e) {}
-  const forBro = (broText || text) + (broText ? '' : tail.replace('💪 Брату: к переводу', '💪 К переводу вам:').replace('💪 Брату: всё переведено', '💪 Вам всё переведено'));
+  const forBro = (broText || text) + (broText ? '' : tail.replace('💪 Брату: к переводу', '💪 Брат, к переводу тебе:').replace('💪 Брату: всё переведено', '💪 Брат, тебе всё переведено'));
   if (ctx.dry) { ctx.out.push({ method: 'GROUP', text: text + tail }); for (const b of bros) ctx.out.push({ method: 'BRO ' + b, text: forBro }); return; }
   const gid = await store(ctx, { op: 'get', k: 'rentGroup' });
   if (gid) await tg(ctx, 'sendMessage', { chat_id: gid, text: premium(text + tail), parse_mode: 'HTML' }).catch(() => {});
@@ -1181,8 +1299,8 @@ async function viewerScreen(ctx, data, cfg) {          // меню брата: �
   const back = [['↩️ Меню аренды', 'vm']];
   if (data === 'vs') {                                   // СТАРТ брата (владелец 28.11): актуальное + одна кнопка «Меню»
     const o = await rentOwe(ctx, cfg), os = ordList(await getOrds(ctx));
-    return send(ctx, ['💪 <b>АРЕНДА PS5</b>', '', `🎮 Сейчас в аренде: <b>${os.length}</b>${os.length ? ' (' + os.map(x => x.ps || x.id).join(' ') + ')' : ''}`,
-      o.due > 0 ? `💸 К переводу вам: <b>${fmt(o.due)}</b>` : '✅ Вам всё переведено'].join('\n'), [[['📋 Меню', 'vm', 'primary']]]);
+    return send(ctx, ['🤜🤛 <b>Здорово, брат!</b> 💪', '', `🎮 Сейчас в аренде: <b>${os.length}</b>${os.length ? ' (' + os.map(x => x.ps || x.id).join(' ') + ')' : ''}`,
+      o.due > 0 ? `💸 Брат, к переводу тебе: <b>${fmt(o.due)}</b>` : '✅ Брат, тебе всё переведено 🔥'].join('\n'), [[['📋 Меню', 'vm', 'primary']]]);   // братский стиль (владелец 28.11)
   }
   if (data === 'vo') {
     const m = await getOrds(ctx), items = await openItems(ctx), os = ordList(m);
@@ -1195,8 +1313,8 @@ async function viewerScreen(ctx, data, cfg) {          // меню брата: �
   if (data === 'vi' || data === 've') return rentList(ctx, data === 'vi' ? 'Доход' : 'Расход', back);
   if (data === 'vv') return rentInvScreen(ctx, cfg);
   const o = await rentOwe(ctx, cfg);
-  return send(ctx, ['🎮 <b>АРЕНДА PS5</b>', '', `💵 Доходы: <b>${fmt(o.inc)}</b>`, `💸 Расходы: <b>${fmt(o.exp)}</b>`, `📈 Прибыль: <b>${fmt(o.profit)}</b>`, '',
-    `💪 Ваша доля: ${fmt(o.owe)}`, `Переведено вам: ${fmt(o.paid)}`, o.due > 0 ? `К переводу вам: <b>${fmt(o.due)}</b>` : '✅ Всё переведено'].join('\n'),
+  return send(ctx, ['🎮 <b>АРЕНДА PS5 — наше дело, брат</b> 🤝', '', `💵 Доходы: <b>${fmt(o.inc)}</b>`, `💸 Расходы: <b>${fmt(o.exp)}</b>`, `📈 Прибыль: <b>${fmt(o.profit)}</b>`, '',
+    `💪 Твоя доля (60%): ${fmt(o.owe)}`, `Переведено тебе: ${fmt(o.paid)}`, o.due > 0 ? `К переводу тебе: <b>${fmt(o.due)}</b>` : '✅ Всё переведено, брат 🔥'].join('\n'),
     [[['📋 Сделки', 'vo', 'primary']], [['📈 Доходы', 'vi'], ['📉 Расходы', 've']], [['💼 Вложения', 'vv'], ['📄 Таблица', RENT_URL]]]);
 }
 async function rentShare(ctx, cfg) {
@@ -1690,6 +1808,7 @@ async function debtRows(ctx, cfg) {                         // кнопки до
   return rows;
 }
 async function startScreen(ctx) {
+  if (ctx.rishat) return rishatStart(ctx);
   if (ctx.wife) return wifeStart(ctx);
   await purge(ctx); await putSt(ctx, {});
   const cfg = await config(ctx);
@@ -2124,6 +2243,7 @@ async function onCallback(ctx, q, again) {
   if (k === 'ns') { await gone(ctx, mid); return onNs(ctx, cfg, st, v); }
   if (k === 'wp' || k === 'wn' || k === 'wpf' || k === 'wga' || k === 'wgr') return onWifeReq(ctx, cfg, k, v, mid);   // ответы на запросы жены
   if (k === 'wi') { await gone(ctx, mid); return wInboxScreen(ctx); }   // ящик запросов жены
+  if (k === 'xy' || k === 'xn' || k === 'xyf') return onRishatReq(ctx, cfg, k, v, mid);   // вложение по просьбе Ришата
   if (k === 'supd') { await gone(ctx, mid); return closeSupplier(ctx, cfg); }   // долг стирается в supplierDone, после ответа   // долг погашен до следующего /report
   if (k === 'sp') {                                  // после заявки PS SHOP: сколько рублей ушло поставщику
     await tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } });
@@ -2435,6 +2555,10 @@ async function handle(ctx, upd) {
     if (m && /^\/start(@\w+)?$/i.test(m.text || '') && USER_WIPE && !ctx.dry) await wipeChat(ctx, m, 'wipeFrom:' + ctx.chat);   // как у владельца
     if (q) { await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id }); await gone(ctx, q.message.message_id); }
     return viewerScreen(ctx, q ? q.data : 'vs', cfg).catch(e => send(ctx, '⚠️ Ошибка: ' + e.message));   // /start → СТАРТ брата
+  }
+  if ((cfg.rishat || []).includes(String(from.id)) && !cfg.owners.includes(String(from.id))) {   // Ришат (задача 24)
+    ctx.rishat = true;
+    try { return await onRishat(ctx, m, q, cfg); } catch (e) { if (ctx.dry) ctx.out.push({ method: 'ERR', text: e.stack }); return send(ctx, '⚠️ Ошибка: ' + e.message); }
   }
   if ((cfg.wife || []).includes(String(from.id)) && !cfg.owners.includes(String(from.id))) {   // жена (задача 25)
     ctx.wife = true;
