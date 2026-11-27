@@ -906,7 +906,7 @@ async function onMessage(ctx, m) {
   }
   if (/^\/menu$/i.test(text) || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
   if (/^\/(claude|clone|клод)(@\w+)?$/i.test(text)) { await putSt(ctx, { await: 'claude', g: {} });
-    return send(ctx, '🎧 <b>Слушаю запрос.</b> Напишите или скажите голосом, что изменить в боте.'); }
+    return send(ctx, '🎧 <b>Слушаю.</b> Напишите или скажите голосом правку — я её запишу.'); }
   if (m.voice || m.audio || m.video_note) {
     const f = m.voice || m.audio || m.video_note;
     const said = await transcribe(ctx, await tgFile(ctx, f.file_id));
@@ -944,7 +944,7 @@ async function onMessage(ctx, m) {
     q.push({ id: q.length + 1, at: Date.now(), text: text.slice(0, 2000), done: false });
     if (!ctx.dry) await store(ctx, { op: 'put', k: 'claudeQ', v: q });
     await putSt(ctx, {});
-    return send(ctx, `📝 <b>Запрос №${q.length} принят.</b>\nClaude внесёт правку и напишет здесь, когда будет готово.`);
+    return send(ctx, `📝 <b>Правка №${q.length} записана.</b>`);   // только записать (владелец 27.11)
   }
   if (st.g && st.await === 'fmsum') return fmSetPlan(ctx, text);
   if (st.g && ['gsum', 'gname', 'gamt', 'gdate'].includes(st.await)) return onGoalText(ctx, cfg, st, text);
