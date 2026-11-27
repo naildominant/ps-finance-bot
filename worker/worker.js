@@ -918,7 +918,7 @@ async function viewerScreen(ctx, data, cfg) {          // меню брата: �
     const L = ['📋 <b>Текущие сделки</b>', ''];
     if (!os.length) L.push('Открытых заказов нет.'); else for (const o of os) L.push('• ' + ordInfo(o, items).label);
     const closed = Object.values(m).filter(o => o && o.closed && o.at >= Date.parse(fmBounds().start)).length;
-    L.push('', `🏁 Закрыто с ${dm(fmBounds().start)}: ${closed}`);
+    L.push('', `✅ Сделок закрыто с ${dm(fmBounds().start)}: <b>${closed}</b>`);   // с начала финмесяца (владелец 27.11)
     return send(ctx, L.join('\n'), [back]);
   }
   if (data === 'vi') return monthReport(ctx, 'in', 1);
