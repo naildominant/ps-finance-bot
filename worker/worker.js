@@ -523,7 +523,7 @@ async function onTool(ctx, q) {
     for (const { r, t, h } of rows) {
       if (h) L.push(h === '—' ? '┈┈┈┈┈┈┈┈┈┈' : h, '');
       const v = Number(r[8]) || 0, j = Number(r[9]) || 0, usd = r[2] === '$';
-      L.push(`${++n}. <b>${esc(t)}</b>\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}` + (t === 'ДОЛЛАРЫ' ? `\n      🔒 ФОНД: <b>$${fmt(Math.min(fond, v))}</b>\n      💼 Отложено: <b>$${fmt(Math.max(0, v - fond))}</b>` : '') + (t === 'ВКЛАД' ? `\n      🎯 цель ${fmt(GOAL_SUM)} к ${GOAL_DATE}: ${Math.round(v / GOAL_SUM * 100)}%, осталось ${fmt(Math.max(0, GOAL_SUM - v))}` : ''), '');
+      L.push(`${++n}. <b>${esc(t)}</b>\n      <b>${usd ? '$' + fmt(v) : fmt(v) + ' сум'}</b>${j ? ` (из них чужие ${fmt(j)})` : ''}` + (t === 'ДОЛЛАРЫ' ? `\n      🔒 ФОНД: <b>$${fmt(Math.min(fond, v))}</b>\n      💼 Отложено: <b>$${fmt(Math.max(0, v - fond))}</b>` : '') , '');
       if (!usd) { tot += v; alien += j; }
     }
     L.push('━━━━━━━━━━', `Всего в сумах: <b>${fmt(tot)}</b>`); if (alien) L.push(`Из них мои: <b>${fmt(tot - alien)}</b>`);
@@ -1209,8 +1209,8 @@ const PS_MARKS = ['△', '✕', '□'];
 async function rentStart(ctx) {
   const m = await getOrds(ctx), items = await openItems(ctx), os = ordList(m);
   const rows = os.map(o => [[ordInfo(o, items).label, 'ro:' + o.id]]);
-  rows.push([['🆕 Новый клиент', 'ro:new']]);
-  rows.push([['−', 'ra:exp']], [['📉 Расходы', 'mr:out|1']], [['💼 Вложения', 'ra:inv'], ['📄 Таблица', 'ra:tab']], [BACK]);   // расход аренды, сводка, таблица (владелец 27.11)
+  rows.push([['🆕 Новый клиент', 'ro:new', 'success']]);
+  rows.push([['−', 'ra:exp', 'danger']], [['📉 Расходы', 'mr:out|1', 'primary']], [['💼 Вложения', 'ra:inv'], ['📄 Таблица', 'ra:tab']], [BACK]);   // цвета — владелец 27.11 (/claude №2)   // расход аренды, сводка, таблица (владелец 27.11)
   return send(ctx, '<b>АРЕНДА: какой клиент?</b>', rows);
 }
 async function rentConsole(ctx) {                          // занятые приставки (у открытых заказов) не предлагаем
