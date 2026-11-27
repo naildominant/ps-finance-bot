@@ -95,6 +95,7 @@ async function config(ctx, force) {
       inc: String(r[10] || '').split(',').map(x => x.trim()).filter(Boolean), exp: String(r[11] || '').split(',').map(x => x.trim()).filter(Boolean) })),
     owners: sets.values.filter(r => /Telegram ID: Наиль/.test(r[0])).map(r => String(r[1])).filter(Boolean),
     viewers: sets.values.filter(r => /Telegram ID: брат/i.test(r[0])).map(r => String(r[1])).filter(Boolean),   // брат: только смотрит аренду (27.11)
+    viewersTest: sets.values.filter(r => /Telegram ID: брат \(тест\)/i.test(r[0])).map(r => String(r[1])).filter(Boolean),   // пока есть тестовый — лично пишем только ему
   };
   await ctx.env.KV.put('cfg', JSON.stringify(c));
   return c;
@@ -903,23 +904,27 @@ async function rentOwe(ctx, cfg) {                     // сколько бра�
   const inv = await store(ctx, { op: 'get', k: 'rentInv' }), owe = Math.round(rentSplit(inv, inc - exp).bro);
   return { inc, exp, profit: inc - exp, owe, paid, due: owe - paid };
 }
-async function rentNotify(ctx, text) {                 // сообщение в рабочую группу с братом (если подключена)
-  if (ctx.dry) { ctx.out.push({ method: 'GROUP', text }); return; }
-  const gid = await store(ctx, { op: 'get', k: 'rentGroup' }); if (!gid) return;
-  try { const cfg = await config(ctx), o = await rentOwe(ctx, cfg);
-    text += `\n\n💪 Брату: ${o.due > 0 ? 'к переводу <b>' + fmt(o.due) + '</b>' : 'всё переведено ✅'}`; } catch (e) {}
-  await tg(ctx, 'sendMessage', { chat_id: gid, text: premium(text), parse_mode: 'HTML' }).catch(() => {});
+async function rentNotify(ctx, text, broText) {        // событие аренды → рабочая группа + лично брату (владелец 27.11, ответ 15); без карт
+  const cfg = await config(ctx);
+  const bros = (cfg.viewersTest && cfg.viewersTest.length) ? cfg.viewersTest : (cfg.viewers || []);   // пока проверяем — только тестовому
+  let tail = ''; try { const o = await rentOwe(ctx, cfg); tail = `\n\n💪 Брату: ${o.due > 0 ? 'к переводу <b>' + fmt(o.due) + '</b>' : 'всё переведено ✅'}`; } catch (e) {}
+  const forBro = (broText || text) + (broText ? '' : tail.replace('💪 Брату: к переводу', '💪 К переводу вам:').replace('💪 Брату: всё переведено', '💪 Вам всё переведено'));
+  if (ctx.dry) { ctx.out.push({ method: 'GROUP', text: text + tail }); for (const b of bros) ctx.out.push({ method: 'BRO ' + b, text: forBro }); return; }
+  const gid = await store(ctx, { op: 'get', k: 'rentGroup' });
+  if (gid) await tg(ctx, 'sendMessage', { chat_id: gid, text: premium(text + tail), parse_mode: 'HTML' }).catch(() => {});
+  for (const b of bros) await tg(ctx, 'sendMessage', { chat_id: b, text: premium(forBro), parse_mode: 'HTML' }).catch(() => {});
 }
 async function rentEvent(ctx, d, id) {                 // запись по аренде → в группу
   const money = d.cur === '$' ? '$' + fmt(d.amount) : fmt(d.amount) + ' сум', ord = d.ord && d.ord !== 'new' ? ' · заказ ' + d.ord : '';
   const ps = d.ps ? ' ' + d.ps : '';
-  const t = d.type === 'Доход' ? `💵 <b>Оплата аренды${ps}: ${money}</b>${ord}`
+  const per = d.until ? ` · ${dm(d.since || d.date)}–${dm(d.until)}` : '';
+  const t = d.type === 'Доход' ? `💵 <b>${/Продлен/.test(d.cat || '') ? 'Продление' : 'Оплата аренды'}${ps}: ${money}</b>${per}${ord}`
     : d.type === 'Предоплата' ? `🆕 <b>Бронь${ps}: предоплата ${money}</b>${ord}${d.book ? ' · на ' + human(d.book) : ''}`
     : d.type === 'Залог' ? `🔐 <b>Залог взят: ${money}</b>${ord}`
     : d.type === 'Возврат залога' ? `↩️ <b>Залог возвращён: ${money}</b>${ord}`
     : d.type === 'Расход' ? `💸 <b>Расход аренды: ${esc(d.cat || d.group || '')} ${money}</b>`
     : d.type === 'Между своими' && /^Арс/.test(d.to || '') ? `💪 <b>Брату переведено: ${money}</b>` : null;
-  if (t) await rentNotify(ctx, t + (d.comment && d.type !== 'Между своими' ? `\n💬 ${esc(d.comment)}` : ''));
+  if (t) await rentNotify(ctx, t, d.type === 'Между своими' ? `💪 <b>Перевод: ${money}</b>` : null);   // без комментариев: там бывают карты (ответы 16, 18, 19)
 }
 // брату: каждая оплата аренды строкой со сроком (дд.мм–дд.мм), расходы — дата, на что, сумма; без карт (владелец 27.11)
 async function rentList(ctx, T, back) {
