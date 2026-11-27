@@ -447,6 +447,15 @@ async function doneMark(ctx, type) {
   if (DONE_STICKER[type]) return tg(ctx, 'sendSticker', { chat_id: ctx.chat, sticker: DONE_STICKER[type] });
   if (DONE_EMO[type]) return send(ctx, `<tg-emoji emoji-id="${DONE_EMO[type]}">💸</tg-emoji>`);
 }
+async function wipeChat(ctx, m, key) {                    // /start: стереть переписку выше в этом чате
+  const from = Math.max(1, ((await store(ctx, { op: 'get', k: key })) || m.message_id - 1000));
+  for (let hi = m.message_id; hi >= from; hi -= 100) {
+    const ids = []; for (let i = hi; i > Math.max(from - 1, hi - 100); i--) ids.push(i);
+    await tg(ctx, 'deleteMessages', { chat_id: ctx.chat, message_ids: ids }).catch(() => {});
+  }
+  await store(ctx, { op: 'put', k: key, v: m.message_id });
+}
+const USER_WIPE = true;                                   // жена и брат: /start тоже стирает их чат (владелец 28.11) — не зависит от TEST_WIPE
 const TEST_WIPE = true;                                   // /start стирает чат — только на время теста (выключить на запуске)
 // накопление (владелец 26.11): ВКЛАД = копилка на 14 000 000 сум к 06.01.2027 (вклад больше не резерв PS SHOP)
 const GOAL_SUM = 14000000, GOAL_DATE = '05.01.2027';
@@ -675,6 +684,7 @@ async function onWife(ctx, m, q, cfg) {
     return onCallback(ctx, q, true);
   }
   const text = (m.text || '').trim();
+  if (/^\/start(@\w+)?$/i.test(text) && USER_WIPE && !ctx.dry) await wipeChat(ctx, m, 'wipeFrom:' + ctx.chat);   // как у владельца
   if (/^\/(start|menu)(@\w+)?$/i.test(text) || /^(отмена|стоп|меню)$/i.test(text)) return wifeMenu(ctx);
   if (m.voice || m.audio || m.video_note) {             // голосовое — сразу владельцу (владелец 28.11)
     for (const o of cfg.owners) await tg(ctx, 'forwardMessage', { chat_id: o, from_chat_id: ctx.chat, message_id: m.message_id }).catch(() => {});
@@ -1219,15 +1229,7 @@ async function onMessage(ctx, m) {
   if (ce.length && !text.replace(/[\s\u{FE0F}\u{200D}\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{2B05}-\u{2B07}\u{2190}-\u{21FF}]/gu, '')) return send(ctx, 'Эмодзи запомнил 👌');
   if (/^\/start$/i.test(text)) {                           // /start: стереть всё выше и показать СТАРТ (владелец 26.11, на время теста)
     await putSt(ctx, {});
-    if (TEST_WIPE && !ctx.dry) {
-      const from = Math.max(1, ((await store(ctx, { op: 'get', k: 'wipeFrom' })) || m.message_id - 1000));
-      for (let hi = m.message_id; hi >= from; hi -= 100) {
-        const ids = []; for (let i = hi; i > Math.max(from - 1, hi - 100); i--) ids.push(i);
-        await tg(ctx, 'deleteMessages', { chat_id: ctx.chat, message_ids: ids }).catch(() => {});
-      }
-      await store(ctx, { op: 'put', k: 'wipeFrom', v: m.message_id });
-      await store(ctx, { op: 'put', k: 'trail', v: [] }); ctx.trail = [];
-    }
+    if (TEST_WIPE && !ctx.dry) { await wipeChat(ctx, m, 'wipeFrom'); await store(ctx, { op: 'put', k: 'trail', v: [] }); ctx.trail = []; }
     return startScreen(ctx);
   }
   if (ctx.wife) return wifeText(ctx, cfg, st, m, text);   // жена: только ответы по своей записи
@@ -2372,6 +2374,7 @@ async function handle(ctx, upd) {
   }
   if ((cfg.viewers || []).includes(String(from.id)) && !cfg.owners.includes(String(from.id))) {   // брат: только просмотр аренды
     ctx.viewer = true; ctx.noTrack = true;
+    if (m && /^\/start(@\w+)?$/i.test(m.text || '') && USER_WIPE && !ctx.dry) await wipeChat(ctx, m, 'wipeFrom:' + ctx.chat);   // как у владельца
     if (q) { await tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id }); await gone(ctx, q.message.message_id); }
     return viewerScreen(ctx, q ? q.data : 'vm', cfg).catch(e => send(ctx, '⚠️ Ошибка: ' + e.message));
   }
