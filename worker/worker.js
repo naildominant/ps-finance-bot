@@ -461,7 +461,8 @@ const CAT_STYLE = { 'Игры PS5': 'success', 'Игры PS4': 'primary', 'GTA 6
   'OLX': 'success', 'Instagram': 'danger', 'Telegram': 'primary', 'Непредвиденные': 'danger' };
 const LOGO_STICKER = 'CAACAgEAAxkBAAIDUGsIoKXIO1jH-DR_xAZ2lhxDC9CUAAJ9AgAC3xnYRkWrScNxc61zPQQ';   // 💰 анимированный (27.11); прежнее лого: CAACAgIAAxkBAAIDPGsIn6xPb-Yt094Hbyt2vygJSQOXAAJNrAACXoTAS9-7y8vi2swfPQQ   // лого на экране СТАРТ
 const PAD = n => '\u2800'.repeat(n);                    // невидимые символы: Telegram не умеет центрировать текст
-const dirMenu = async ctx => { if (ctx.wife) return wifeMenu(ctx); await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['🎯 Цели', 'gl:', 'primary'], ['🔄 Перевод', 'tr', 'primary']], [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };   // долги и «Назад» → СТАРТ (владелец 26.11)
+const dirMenu = async ctx => { if (ctx.wife) return wifeMenu(ctx); await purge(ctx); return send(ctx, PAD(5) + '<b><tg-emoji emoji-id="5409048419211682843">💵</tg-emoji> ГЛАВНОЕ МЕНЮ <tg-emoji emoji-id="5409048419211682843">💵</tg-emoji></b>' + PAD(3) + '\n' + PAD(8) + 'Выбери раздел' + PAD(5), [[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']], [['📈 Доходы', 'mr:in'], ['💳 Баланс', 'adj'], ['📉 Расходы', 'mr:out']], [['🎯 Цели', 'gl:', 'primary'], ['🔄 Перевод', 'tr', 'primary']], ...await wifeRow(ctx), [['📄 Открыть таблицу', SHEET_URL]], ...await debtRows(ctx), [['↩️ Назад', 'st0']]]); };
+async function wifeRow(ctx) { let n = 0; try { n = await wInboxCount(ctx); } catch (e) {} return [[[`👩 Запросы жены${n ? ' (' + n + ')' : ''}`, 'wi']]]; }   // долги и «Назад» → СТАРТ (владелец 26.11)
 
 // ---------- Запись в таблицу ----------
 async function save(ctx, cfg, d) {
@@ -596,9 +597,36 @@ async function nsFinish(ctx, ns) {
 // «💸 Дай денюжку»: сумма → на что → запрос владельцу (✅ Перевёл → с какой карты → перевод на BULKA / ❌ Нет);
 // голосовые — сразу пересылаются владельцу; переводы владельца на BULKA — сообщение жене.
 const WIFE_OK = ['ok', 'no', 'g', 's', 'dt', 'bk', 'cd', 'noop'];   // кнопки записи, которые ей можно
-async function wifeMenu(ctx) {
+async function wifeMenu(ctx) {                            // девчачий стиль (владелец 28.11, задача 27)
   await putSt(ctx, {});
-  return send(ctx, '👋 <b>Привет!</b> Что делаем?', [[['➖ Записать трату', 'wx', 'danger']], [['💳 BULKA CARD', 'wb'], ['📉 Расходы', 'we']], [['🎯 Цели', 'wg'], ['💸 Дай денюжку', 'wd', 'success']]]);
+  return send(ctx, '🌸 <b>Привет, солнышко!</b> 💖\nЧто делаем сегодня? ✨', [[['🛍 Записать трату', 'wx', 'danger']], [['💳 Моя BULKA', 'wb'], ['💎 Мой вклад', 'wv']],
+    [['🧾 Наши расходы', 'we'], ['🎯 Наши цели', 'wg']], [['🎀 Хочу цель', 'wq', 'primary'], ['💸 Дай денюжку', 'wd', 'success']]]);
+}
+async function cardBal(ctx, re) { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]); const r = g.values.find(r => re.test(String(r[0] || ''))); return r ? Number(r[8]) || 0 : 0; }
+async function wifeDep(ctx) {
+  const v = await cardBal(ctx, /^Вклад жены/i);
+  return send(ctx, `💎 <b>Мой вклад</b>\n\nСейчас там: <b>${fmt(v)} сум</b> ✨\n<i>Растёт каждый день, если положить до 16:00</i> 🌱`, [[['➕ Перевела на вклад', 'wvd', 'success']], [['↩️ Меню', 'wm']]]);
+}
+// ящик запросов жены у владельца (владелец 28.11): деньги, цели, лента её трат — без отдельных сообщений
+async function wInbox(ctx) { return (await store(ctx, { op: 'get', k: 'wreq' })) || { _n: 0 }; }
+async function wInboxCount(ctx) { const R = await wInbox(ctx); return Object.values(R).filter(x => x && x.id && (x.kind === 'spent' ? !x.seen : !x.done)).length; }
+async function wInboxAdd(ctx, x) {
+  if (ctx.dry) ctx.out.push({ method: 'INBOX', text: JSON.stringify(x) });   // в тесте — в тестовую копию ящика (dry:wreq)
+  const R = await wInbox(ctx); const id = 'W' + (++R._n); R[id] = { id, at: Date.now(), done: false, ...x };
+  const ids = Object.keys(R).filter(k => k !== '_n'); if (ids.length > 300) for (const k of ids.slice(0, ids.length - 300)) delete R[k];
+  await store(ctx, { op: 'put', k: 'wreq', v: R }); return R[id];
+}
+async function wInboxScreen(ctx) {
+  const R = await wInbox(ctx), all = Object.values(R).filter(x => x && x.id);
+  const open = all.filter(x => x.kind !== 'spent' && !x.done), feed = all.filter(x => x.kind === 'spent' && !x.seen);
+  await send(ctx, `👩 <b>Запросы жены</b>` + (open.length || feed.length ? '' : '\n\nНичего нового ✅'));
+  for (const x of open) {
+    if (x.kind === 'goal') await send(ctx, `🎀 <b>Хочет цель:</b> ${esc(x.name)}\n💰 ${fmt(x.amount)} сум · до ${dm(x.due)}`, [[['✅ Одобрить', 'wga:' + x.id, 'success'], ['❌ Отказать', 'wgr:' + x.id, 'danger']]]);
+    else await send(ctx, `💸 <b>Дай денюжку: ${fmt(x.amount)} сум</b>\nНа что: ${esc(x.what)}`, [[['✅ Перевёл', 'wp:' + x.id, 'success'], ['❌ Нет', 'wn:' + x.id, 'danger']]]);
+  }
+  if (feed.length) { await send(ctx, '🛍 <b>Её траты:</b>\n' + feed.map(x => `${dm(ymdT(new Date(x.at + TZ_MS)))} · ${esc(x.text)}`).join('\n'));
+    if (!ctx.dry) { for (const x of feed) R[x.id].seen = true; await store(ctx, { op: 'put', k: 'wreq', v: R }); } }
+  return send(ctx, '👆', [[['↩️ Назад', 'menu']]]);
 }
 async function wifeBulka(ctx) {
   const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
@@ -626,6 +654,11 @@ async function onWife(ctx, m, q, cfg) {
     if (k === 'wb') { await gone(ctx, mid); return wifeBulka(ctx); }
     if (k === 'we') { await gone(ctx, mid); return monthReport(ctx, 'out', 3); }
     if (k === 'wg') { await gone(ctx, mid); return wifeGoals(ctx); }
+    if (k === 'wv') { await gone(ctx, mid); return wifeDep(ctx); }
+    if (k === 'wvd') { await gone(ctx, mid); await putSt(ctx, { await: 'wdep' });
+      return send(ctx, '💎 <b>Сколько перевела на вклад?</b> Напишите сумму, например <code>500000</code> 💕', [[['↩️ Меню', 'wm']]]); }
+    if (k === 'wq') { await gone(ctx, mid); await putSt(ctx, { await: 'wgname', wg: {} });
+      return send(ctx, '🎀 <b>Новая цель!</b> Как назовём? ✨\nНапример: <code>Новое платье</code>', [[['↩️ Меню', 'wm']]]); }
     if (k === 'wx') { await gone(ctx, mid); await putSt(ctx, { dir: 'Личное', ptype: 'Расход' });
       return send(ctx, '➖ <b>Пишите трату</b> — текстом или фото чека. Например: <code>продукты 150000</code>', [[['↩️ Меню', 'wm']]]); }
     if (k === 'wd') { await gone(ctx, mid); await putSt(ctx, { await: 'wsum' });
@@ -634,12 +667,8 @@ async function onWife(ctx, m, q, cfg) {
       const st = await getSt(ctx); if (!st.wreq) return wifeMenu(ctx);
       const groups = [...new Set(cfg.cats.filter(c => c.dir === 'Личное' && c.kind === 'Расход').map(c => c.group))];
       const what = v === 'x' ? 'другое' : groups[+v] || 'другое';
-      const R = (await store(ctx, { op: 'get', k: 'wreq' })) || { _n: 0 }; const rid = 'W' + (++R._n);
-      R[rid] = { id: rid, amount: st.wreq, what, chat: ctx.chat, at: Date.now(), done: false };
-      await store(ctx, { op: 'put', k: 'wreq', v: R }); await putSt(ctx, {});
-      for (const o of cfg.owners) await tg(ctx, 'sendMessage', { chat_id: o, parse_mode: 'HTML', text: premium(`👩 <b>Дай денюжку: ${fmt(st.wreq)} сум</b>\nНа что: ${esc(what)}`),
-        reply_markup: kb([[['✅ Перевёл', 'wp:' + rid, 'success'], ['❌ Нет', 'wn:' + rid, 'danger']]]) }).catch(() => {});
-      await edit(ctx, mid, `💸 Попросила ${fmt(st.wreq)} сум — ${esc(what)}.\nНаиль получил запрос, ответ придёт сюда.`);
+      await wInboxAdd(ctx, { kind: 'money', amount: st.wreq, what, chat: ctx.chat }); await putSt(ctx, {});   // в ящик владельца, без сообщения
+      await edit(ctx, mid, `💸 Попросила ${fmt(st.wreq)} сум — ${esc(what)} 💕\nНаиль увидит запрос, ответ придёт сюда ✨`);
       return wifeMenu(ctx);
     }
     if (!WIFE_OK.includes(k)) return;                   // остальные кнопки — не для неё
@@ -652,10 +681,28 @@ async function onWife(ctx, m, q, cfg) {
     const f = m.voice || m.audio || m.video_note;
     const said = await transcribe(ctx, await tgFile(ctx, f.file_id)).catch(() => '');
     const st = await getSt(ctx);
-    if (said && (st.d || st.await === 'wsum' || st.ptype)) return onWife(ctx, { ...m, voice: null, audio: null, video_note: null, text: said }, null, cfg);
+    if (said && (st.d || st.await || st.ptype)) return onWife(ctx, { ...m, voice: null, audio: null, video_note: null, text: said }, null, cfg);
     return send(ctx, '🎤 Переслала Наилю' + (said ? ': «' + esc(said) + '»' : '.') + (said && /\d/.test(said) ? '\nЕсли это трата — нажмите «➖ Записать трату» и повторите.' : ''), [[['↩️ Меню', 'wm']]]);
   }
   const st = await getSt(ctx);
+  if (st.await === 'wdep') {                            // перевела на вклад
+    const a = parseAmount(text); if (!a) return send(ctx, 'Напишите сумму числом, например <code>500000</code> 💕');
+    const b = cardByWord(cfg, 'Булка'), v = cfg.cards.find(c => /^Вклад жены/i.test(c.name));
+    if (!b || !v) return send(ctx, 'Не нашла карту вклада 😔');
+    const id = await botRec(ctx, cfg, { dir: 'Личное', type: 'Между своими', amount: a.amount, from: b.name, to: v.name, comment: 'Перевела на вклад' });
+    await send(ctx, `💎 <b>Записала!</b> ${fmt(a.amount)} сум → вклад ✨ (${id})`);
+    return wifeDep(ctx);
+  }
+  if (st.await === 'wgname') { await putSt(ctx, { await: 'wgsum', wg: { name: text.slice(0, 60) } });
+    return send(ctx, `🎀 «${esc(text.slice(0, 60))}» — <b>сколько нужно?</b> 💰\nНапример: <code>800000</code>`, [[['↩️ Меню', 'wm']]]); }
+  if (st.await === 'wgsum') { const a = parseAmount(text); if (!a) return send(ctx, 'Напишите сумму числом, например <code>800000</code> 💕');
+    await putSt(ctx, { await: 'wgdate', wg: { ...st.wg, amount: a.amount } });
+    return send(ctx, '📅 <b>К какой дате?</b> Например: <code>20.12</code> 🌸', [[['↩️ Меню', 'wm']]]); }
+  if (st.await === 'wgdate') { const y = parseDate(text); if (!y) return send(ctx, 'Не поняла дату 🙈 Напишите, например, <code>20.12</code>');
+    const g = { ...st.wg, due: y }; await wInboxAdd(ctx, { kind: 'goal', name: g.name, amount: g.amount, due: y, chat: ctx.chat }); await putSt(ctx, {});
+    await send(ctx, `🎀 <b>Отправила Наилю!</b>\n${esc(g.name)} — ${fmt(g.amount)} сум до ${dm(y)} ✨\nКак ответит — напишу сюда 💖`);
+    return wifeMenu(ctx); }
+  if (st.await === 'tool' && st.tool && st.tool.kind === 'interest') return onToolText(ctx, cfg, st, text);   // 1-е число: остаток вклада
   if (st.await === 'wsum') {                            // «Дай денюжку»: сумма → на что
     const a = parseAmount(text); if (!a) return send(ctx, 'Напишите сумму числом, например <code>300000</code>.');
     await putSt(ctx, { wreq: a.amount });
@@ -681,15 +728,26 @@ async function wifeText(ctx, cfg, st, m, text) {
 }
 async function wifeEvent(ctx, d, id) {
   const cfg = await config(ctx), money = d.cur === '$' ? '$' + fmt(d.amount) : fmt(d.amount) + ' сум';
-  if (ctx.wife) { for (const o of cfg.owners) await tg(ctx, 'sendMessage', { chat_id: o, parse_mode: 'HTML', text: premium(`👩 <b>Жена записала:</b> ${esc(d.cat || d.group || d.type)} — ${money} (BULKA, ${id})`) }).catch(() => {}); return; }
+  if (d.type === 'Между своими' && /вклад/i.test(d.to || '') && nowT().getUTCHours() >= 16)   // после 16:00 (владелец 28.11)
+    await send(ctx, '⏰ <b>После 16:00</b> — проценты по вкладу пойдут с завтра.');
+  if (ctx.wife) { await wInboxAdd(ctx, { kind: 'spent', text: `${d.type === 'Между своими' ? 'На вклад' : (d.cat || d.group || d.type)} — ${money} (${id})`, seen: false, done: true }); return; }   // в ящик, без сообщения
   if (d.type === 'Между своими' && /^Булка/.test(d.to || '') && !/^Жене:/.test(d.comment || '')) {   // перевод на BULKA → жене (владелец 28.11); по «Дай денюжку» — своё сообщение
     if (ctx.dry) { ctx.out.push({ method: 'WIFE', text: `💸 На BULKA CARD: +${money}` }); return; }
     for (const w of cfg.wife || []) await tg(ctx, 'sendMessage', { chat_id: w, parse_mode: 'HTML', text: premium(`💸 <b>На BULKA CARD: +${money}</b>`) }).catch(() => {});
   }
 }
-async function onWifeReq(ctx, cfg, k, v, mid) {          // владелец отвечает на «Дай денюжку»
+async function onWifeReq(ctx, cfg, k, v, mid) {          // владелец отвечает на запросы жены (ящик)
   const R = (await store(ctx, { op: 'get', k: 'wreq' })) || {}; const [rid, ci] = v.split('|'); const x = R[rid];
   if (!x || x.done) return edit(ctx, mid, 'Этот запрос уже закрыт.');
+  if (k === 'wga') {                                    // цель одобрена → в конец списка целей
+    const g = await getGoals(ctx); if (!g.order || !g.order.length) g.order = goalOrder(g);
+    const gid = 'G' + (++g._n); g.list[gid] = { id: gid, name: x.name, sum: x.amount, cur: 'сум', due: x.due, group: null, cat: null, saved: 0, card: null, done: false, wife: true };
+    g.order.push(gid); await putGoals(ctx, g); x.done = 'да'; await store(ctx, { op: 'put', k: 'wreq', v: R });
+    await tg(ctx, 'sendMessage', { chat_id: x.chat, parse_mode: 'HTML', text: premium(`💖 <b>Наиль одобрил цель!</b>\n🎀 ${esc(x.name)} — ${fmt(x.amount)} сум до ${dm(x.due)} ✨`) }).catch(() => {});
+    return edit(ctx, mid, `✅ Цель «${esc(x.name)}» добавлена в конец списка (${gid}). Жене сообщил.`);
+  }
+  if (k === 'wgr') { await putSt(ctx, { await: 'wgwhy', wgr: rid });
+    return edit(ctx, mid, `❌ Цель «${esc(x.name)}» — <b>почему отказ?</b> Напишите коротко, я передам жене.`); }
   if (k === 'wn') { x.done = 'нет'; await store(ctx, { op: 'put', k: 'wreq', v: R });
     await tg(ctx, 'sendMessage', { chat_id: x.chat, parse_mode: 'HTML', text: premium(`❌ Наиль: сейчас не получится (${fmt(x.amount)} — ${esc(x.what)}).`) }).catch(() => {});
     return edit(ctx, mid, `❌ Отказ: ${fmt(x.amount)} сум — ${esc(x.what)}. Жене сообщил.`); }
@@ -845,7 +903,11 @@ async function morning(env) {
   ctx.chat = cfg.owners[0]; if (!ctx.chat) return;
   const today = todayYmd();
   if (today.endsWith('-01')) {
-    const dep = cfg.cards.find(c => /вклад/i.test(c.name));
+    const dep = cfg.cards.find(c => /вклад/i.test(c.name) && !/^Вклад жены/i.test(c.name));
+    const wdep = cfg.cards.find(c => /^Вклад жены/i.test(c.name));   // вклад жены — спрашиваем у неё (задача 26)
+    for (const w of (wdep ? cfg.wife || [] : [])) { const c2 = { env, out: [], chat: w, wife: true };
+      await putSt(c2, { tool: { kind: 'interest', card: wdep.name }, await: 'tool' });
+      await send(c2, '🌸 <b>Начало месяца!</b> Сколько сейчас на твоём вкладе? 💎\nНапиши сумму из приложения — проценты банка прибавлю ✨'); }
     if (dep) { await putSt(ctx, { tool: { kind: 'interest', card: dep.name }, await: 'tool' });
       await send(ctx, `📅 Начало месяца. Сколько сейчас на «${dep.name}»? Напишите сумму из приложения — разницу (проценты банка) прибавлю к вкладу.`); }
   }
@@ -1169,6 +1231,13 @@ async function onMessage(ctx, m) {
     return startScreen(ctx);
   }
   if (ctx.wife) return wifeText(ctx, cfg, st, m, text);   // жена: только ответы по своей записи
+  if (st.await === 'wgwhy' && st.wgr && text) {           // причина отказа по цели жены
+    const R = await wInbox(ctx), x = R[st.wgr]; await putSt(ctx, {});
+    if (!x || x.done) return send(ctx, 'Этот запрос уже закрыт.');
+    x.done = 'нет'; x.why = text.slice(0, 300); await store(ctx, { op: 'put', k: 'wreq', v: R });
+    await tg(ctx, 'sendMessage', { chat_id: x.chat, parse_mode: 'HTML', text: premium(`🙈 <b>Цель «${esc(x.name)}» пока не одобрена</b>\nНаиль: «${esc(x.why)}» 💭`) }).catch(() => {});
+    return send(ctx, `Передал жене: «${esc(x.why)}».`, [[['↩️ Меню', 'menu']]]);
+  }
   if (st.await === 'claude' && text && !/^\/(start|menu)$/i.test(text)) return claudeAdd(ctx, text);   // правка — раньше всех проверок («главное меню» в тексте правки не уводит в меню)
   if (/^\/menu$/i.test(text) || /^(отмена|стоп)$/i.test(text) || /главное\s*меню/i.test(text)) { await putSt(ctx, {}); return dirMenu(ctx); }
   if (/^\/newschet(@\w+)?$/i.test(text)) return nsStart(ctx);
@@ -2004,7 +2073,8 @@ async function onCallback(ctx, q, again) {
   }
   if (k === 'menu') { await gone(ctx, mid); return dirMenu(ctx); }
   if (k === 'ns') { await gone(ctx, mid); return onNs(ctx, cfg, st, v); }
-  if (k === 'wp' || k === 'wn' || k === 'wpf') return onWifeReq(ctx, cfg, k, v, mid);   // ответ на «Дай денюжку»
+  if (k === 'wp' || k === 'wn' || k === 'wpf' || k === 'wga' || k === 'wgr') return onWifeReq(ctx, cfg, k, v, mid);   // ответы на запросы жены
+  if (k === 'wi') { await gone(ctx, mid); return wInboxScreen(ctx); }   // ящик запросов жены
   if (k === 'supd') { await gone(ctx, mid); return closeSupplier(ctx, cfg); }   // долг стирается в supplierDone, после ответа   // долг погашен до следующего /report
   if (k === 'sp') {                                  // после заявки PS SHOP: сколько рублей ушло поставщику
     await tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } });
