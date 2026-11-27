@@ -745,6 +745,34 @@ async function supplierDone(ctx, cfg, card, left) {
 }
 
 // ---------- Аренда: доля брата 60% после каждой сделки ----------
+// ---------- Аренда: вложения брата (задача 18, владелец 27.11) ----------
+// Брат вложил сумму в $ (DO rentInv.usd, ставится /rentinv — сумма не в коде). Пока не вернулась: брату 60%, Наилю 40%;
+// вернулось = остаток карты Арс (по курсу ЦБ). После полного возврата доли меняются: Наилю 60%, брату 40% — с прибыли после этого момента.
+async function rentInvState(ctx, cfg, profit) {
+  const inv = (await store(ctx, { op: 'get', k: 'rentInv' })) || null;
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
+  const r = g.values.find(r => /^Арс/.test(String(r[0] || ''))), ars = r ? Number(r[8]) || 0 : 0, rate = await cbuRate(ctx, todayYmd());
+  const back = Math.round(ars / rate), left = inv ? Math.max(0, inv.usd - back) : 0;
+  if (inv && !inv.switched && left <= 0 && profit != null) {   // вложение вернулось — меняем доли с этого момента
+    inv.switched = true; inv.p0 = profit; inv.at = Date.now(); if (!ctx.dry) await store(ctx, { op: 'put', k: 'rentInv', v: inv });
+    await send(ctx, `🎉 <b>Вложения брата вернулись полностью!</b>\nС этого момента доли аренды: вам 60%, брату 40%.`);
+  }
+  return { inv, ars, back, left, rate };
+}
+function rentSplit(inv, profit) {                       // сколько всего положено брату и Наилю с начала учёта
+  if (!inv || !inv.switched) return { bro: profit * 0.6, mine: profit * 0.4, pb: 60, pm: 40 };
+  const p0 = inv.p0 || 0, after = profit - p0;
+  return { bro: p0 * 0.6 + after * 0.4, mine: p0 * 0.4 + after * 0.6, pb: 40, pm: 60 };
+}
+async function rentInvScreen(ctx, cfg) {
+  const s = await rentInvState(ctx, cfg, null);
+  if (!s.inv) return send(ctx, '💼 Вложения в аренду не заданы.', [[['↩️ Назад', 'd:1']]]);
+  const L = ['💼 <b>Вложения брата в аренду</b>', '',
+    `💰 Вложено: <b>$${fmt(s.inv.usd)}</b>`, `✅ Вернулось: <b>$${fmt(Math.min(s.back, s.inv.usd))}</b> (${fmt(s.ars)} сум на Арс)`,
+    s.left > 0 ? `⏳ Осталось: <b>$${fmt(s.left)}</b> (${Math.round((s.inv.usd - s.left) / s.inv.usd * 100)}%)` : '🎉 Вернулось полностью', '',
+    s.inv.switched ? 'Доли сейчас: <b>вам 60%</b>, брату 40%.' : 'Доли сейчас: брату 60%, вам 40%.\nПосле возврата: <b>вам 60%</b>, брату 40%.'];
+  return send(ctx, L.join('\n'), [[['↩️ Назад', 'd:1']]]);
+}
 async function rentShare(ctx, cfg) {
   ctx.noTrack = true;
   const J = await journal(ctx);
@@ -754,13 +782,14 @@ async function rentShare(ctx, cfg) {
   const profit = inc - exp;
   const paid = ars ? J.filter(x => x.type === 'Между своими' && x.to === ars.name).reduce((a, x) => a + x.uzs, 0) : 0;
   const mineDone = J.filter(x => x.dir === 'Личное' && x.cat === 'Доля из аренды (40%)').reduce((a, x) => a + x.uzs, 0);
-  const mineAdd = Math.round(profit * 0.4 - mineDone);
+  const { inv } = await rentInvState(ctx, cfg, profit), sp = rentSplit(inv, profit);
+  const mineAdd = Math.round(sp.mine - mineDone);
   let nid = '';
-  if (mineAdd > 0) nid = await botRec(ctx, cfg, { dir: 'Личное', type: 'Доход', group: 'Доля из аренды (40%)', cat: 'Доля из аренды (40%)', amount: mineAdd, comment: 'Доля 40% аренды' });
-  const due = Math.round(profit * 0.6 - paid);
+  if (mineAdd > 0) nid = await botRec(ctx, cfg, { dir: 'Личное', type: 'Доход', group: 'Доля из аренды (40%)', cat: 'Доля из аренды (40%)', amount: mineAdd, comment: `Доля ${sp.pm}% аренды` });
+  const due = Math.round(sp.bro - paid);
   const L = [`👤 <b>Брату перевести: ${fmt(Math.max(0, due))} сум</b>`,     // коротко (владелец 26.11); подробности — в таблице «Доли»
-    `<i>60% прибыли аренды, уже отдано ${fmt(paid)}</i>`];
-  if (nid) L.push('', `🧡 Ваши 40%: +${fmt(mineAdd)} сум → Личное`);
+    `<i>${sp.pb}% прибыли аренды, уже отдано ${fmt(paid)}</i>`];
+  if (nid) L.push('', `🧡 Ваши ${sp.pm}%: +${fmt(mineAdd)} сум → Личное`);
   if (due <= 0) { await send(ctx, L.join('\n')); return false; }
   await store(ctx, { op: 'put', k: 'bro', v: { amount: due } });
   await send(ctx, L.join('\n'), [[['✅ Перевёл брату', 'bro:'], ['Позже', 'brol:']]]);
@@ -1106,7 +1135,7 @@ async function rentStart(ctx) {
   const m = await getOrds(ctx), items = await openItems(ctx), os = ordList(m);
   const rows = os.map(o => [[ordInfo(o, items).label, 'ro:' + o.id]]);
   rows.push([['🆕 Новый клиент', 'ro:new']]);
-  rows.push([['−', 'ra:exp']], [['📉 Расходы', 'mr:out|1']], [['📄 Таблица', 'ra:tab']], [BACK]);   // расход аренды, сводка, таблица (владелец 27.11)
+  rows.push([['−', 'ra:exp']], [['📉 Расходы', 'mr:out|1']], [['💼 Вложения', 'ra:inv'], ['📄 Таблица', 'ra:tab']], [BACK]);   // расход аренды, сводка, таблица (владелец 27.11)
   return send(ctx, '<b>АРЕНДА: какой клиент?</b>', rows);
 }
 async function rentConsole(ctx) {                          // занятые приставки (у открытых заказов) не предлагаем
@@ -1139,7 +1168,8 @@ async function rentDue(ctx, cfg) {
   const inc = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Доход').reduce((a, x) => a + x.uzs, 0);
   const exp = J.filter(x => x.dir === 'Аренда PS5' && x.type === 'Расход').reduce((a, x) => a + x.uzs, 0);
   const paid = ars ? J.filter(x => x.type === 'Между своими' && x.to === ars.name).reduce((a, x) => a + x.uzs, 0) : 0;
-  return Math.round((inc - exp) * 0.6 - paid);
+  const inv = await store(ctx, { op: 'get', k: 'rentInv' });
+  return Math.round(rentSplit(inv, inc - exp).bro - paid);
 }
 // долг поставщику (владелец 26.11): из ответа бота HPS на /report — «Долг: 52,42 USDT | ≈ 4 607.72 RUB» → рубли × 202 = сумы.
 // Владелец пересылает этот ответ боту; в 23:03 бот напоминает. Кнопка долга на СТАРТ — если долг больше $120 (USDT).
@@ -1650,6 +1680,7 @@ async function onCallback(ctx, q, again) {
   if (k === 'ra') {                                  // Аренда: записать расход / таблица
     await gone(ctx, mid); await putSt(ctx, { dir: 'Аренда PS5' });
     if (v === 'tab') return send(ctx, '📄 Таблицы аренды ещё нет. Привяжем позже.', [[['↩️ Назад', 'd:1']]]);
+    if (v === 'inv') return rentInvScreen(ctx, cfg);
     return onCallback(ctx, { ...q, data: 'pt:-' }, true);
   }
   if (['gl', 'gs', 'gk', 'gd', 'gx', 'gy', 'gn', 'gw', 'gu', 'gdn'].includes(k)) return onGoal(ctx, cfg, k, v, mid, st);
@@ -2015,6 +2046,7 @@ export default {
       if (u.searchParams.get('month')) g.cush.m[fmBounds().start] = Number(u.searchParams.get('month'));
       g.cush.card = 'Доллары'; await putGoals(ctx, g); return Response.json(g.cush);
     }
+    if (u.pathname === '/rentinv') { const c = { env, dry: !!u.searchParams.get('dry') }; const v = { usd: Number(u.searchParams.get('usd')), switched: false }; await store(c, { op: 'put', k: 'rentInv', v }); return Response.json(v); }   // вложения брата в аренду, $
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
     return new Response('ok');
   },
