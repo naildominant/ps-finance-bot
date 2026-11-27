@@ -418,7 +418,7 @@ async function askNext(ctx, cfg, st) {
     d.since = o && o.until && /Продлен/.test(d.cat || '') ? o.until : d.date;
     st.await = 'until'; await putSt(ctx, st);
     const b = [1, 2, 3, 7].map(n => { const y = shiftYmd(d.since, n); return [`${dm(y)} (${n} ${n === 1 ? 'сутки' : n < 5 ? 'суток' : 'суток'})`, 'un:' + y]; });
-    return void await send(ctx, `🗓 <b>Аренда с ${dm(d.since)} — до какого числа?</b>\nНажмите или напишите дату, например <code>${dm(shiftYmd(d.since, 1))}</code>.`, withBack(chunk(b, 2)));
+    return void await send(ctx, `🗓 <b>Аренда с ${dm(d.since)} — до какого числа?</b>\nНажмите, выберите в календаре или напишите, например <code>${dm(shiftYmd(d.since, 1))}</code>.`, [...chunk(b, 2), ...await calendar(ctx, d.since.slice(0, 7), true)]);
   }
   if (d.type === 'Дал в долг' && !d.whom) { st.await = 'whom'; await putSt(ctx, st);
     return void await send(ctx, '🤝 <b>Кому дали в долг?</b> Напишите имя.', withBack()); }
@@ -427,8 +427,8 @@ async function askNext(ctx, cfg, st) {
   if (d.type === 'Предоплата' && d.dir === 'Leadex' && !d.deal) { st.await = 'deal'; await putSt(ctx, st);   // предоплата LEADEX = сделка
     return void await send(ctx, '🤝 <b>Название сделки?</b> Например <code>сайт для Азиза</code>.', withBack()); }
   if (d.type === 'Предоплата' && d.dir !== 'Leadex' && !d.book) { st.await = 'book'; await putSt(ctx, st);
-    return void await send(ctx, '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>На какую дату бронь?</b>\nНажмите кнопку или напишите, например, <code>28.11</code>.',
-      withBack([[['Сегодня', 'bd:0'], ['Завтра', 'bd:1'], ['Послезавтра', 'bd:2']], [['Другая дата', 'cl:' + todayYmd().slice(0, 7)]]])); }
+    return void await send(ctx, '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>На какую дату бронь?</b>\nВыберите в календаре или напишите, например, <code>28.11</code> или <code>8 декабря</code>.',
+      [[['Сегодня', 'bd:0'], ['Завтра', 'bd:1'], ['Послезавтра', 'bd:2']], ...await calendar(ctx, todayYmd().slice(0, 7))]); }   // календарь сразу (владелец 28.11)
   st.await = null; await putSt(ctx, st);
   await send(ctx, summary(d), [[['✅ Записать', 'ok'], ['❌ Отменить', 'no'], ['✏️ Правка', 'ed']], [BACK]]);
   return true;
@@ -624,6 +624,7 @@ async function wifeMenu(ctx) {                            // девчачий с
     [['🧾 Наши расходы', 'we'], ['🎯 Наши цели', 'wg']], [['🎀 Хочу цель', 'wq', 'primary'], ['💸 Дай денюжку', 'wd', 'success']]]);
 }
 async function cardBal(ctx, re) { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]); const r = g.values.find(r => re.test(String(r[0] || ''))); return r ? Number(r[8]) || 0 : 0; }
+const wifeCal = rows => rows.map(r => r.map(b => b[1] === 'bk' ? ['↩️ Меню', 'wm'] : b));
 async function wifeDep(ctx) {
   const v = await cardBal(ctx, /^Вклад жены/i);
   return send(ctx, `💎 <b>Мой вклад</b>\n\nСейчас там: <b>${fmt(v)} сум</b> ✨\n<i>Растёт каждый день, если положить до 16:00</i> 🌱`, [[['➕ Перевела на вклад', 'wvd', 'success']], [['↩️ Меню', 'wm']]]);
@@ -692,6 +693,9 @@ async function onWife(ctx, m, q, cfg) {
       await edit(ctx, mid, `💸 Попросила ${fmt(st.wreq)} сум — ${esc(what)} 💕\nНаиль увидит запрос, ответ придёт сюда ✨`);
       return wifeMenu(ctx);
     }
+    { const st = await getSt(ctx);
+      if (st.await === 'wgdate' && k === 'cl') return edit(ctx, mid, '📅 <b>К какой дате?</b> 🌸\nВыбери в календаре или напиши, например <code>8 марта</code>', wifeCal(await calendar(ctx, v, true)));
+      if (st.await === 'wgdate' && k === 'cd') { await gone(ctx, mid); return onWife(ctx, { message_id: 0, text: v, from: q.from, chat: q.message.chat }, null, cfg); } }   // дата цели из календаря
     if (!WIFE_OK.includes(k)) return;                   // остальные кнопки — не для неё
     return onCallback(ctx, q, true);
   }
@@ -719,7 +723,7 @@ async function onWife(ctx, m, q, cfg) {
     return send(ctx, `🎀 «${esc(text.slice(0, 60))}» — <b>сколько нужно?</b> 💰\nНапример: <code>800000</code>`, [[['↩️ Меню', 'wm']]]); }
   if (st.await === 'wgsum') { const a = parseAmount(text); if (!a) return send(ctx, 'Напишите сумму числом, например <code>800000</code> 💕');
     await putSt(ctx, { await: 'wgdate', wg: { ...st.wg, amount: a.amount } });
-    return send(ctx, '📅 <b>К какой дате?</b> Например: <code>20.12</code> 🌸', [[['↩️ Меню', 'wm']]]); }
+    return send(ctx, '📅 <b>К какой дате?</b> 🌸\nВыбери в календаре или напиши, например <code>8 марта</code>', wifeCal(await calendar(ctx, todayYmd().slice(0, 7), true))); }
   if (st.await === 'wgdate') { const y = parseFuture(text); if (!y) return send(ctx, 'Не поняла дату 🙈 Напишите, например, <code>20.12</code>');
     const g = { ...st.wg, due: y }; await wInboxAdd(ctx, { kind: 'goal', name: g.name, amount: g.amount, due: y, chat: ctx.chat }); await putSt(ctx, {});
     await send(ctx, `🎀 <b>Отправила Наилю!</b>\n${esc(g.name)} — ${fmt(g.amount)} сум до ${dm(y)} ✨\nКак ответит — напишу сюда 💖`);
@@ -2248,11 +2252,13 @@ async function onCallback(ctx, q, again) {
   }
   if (k === 'k') { const c = cfg.cards[+v]; d[st.side] = c.name; await gone(ctx, mid); return st.editing ? afterEdit(ctx, cfg, st) : askNext(ctx, cfg, st); }
   if (k === 'cl' && d) {                            // календарь: открыть / листать месяц
+    if (st.await === 'until') return edit(ctx, mid, `🗓 <b>Аренда с ${dm(d.since || d.date)} — до какого числа?</b>`, await calendar(ctx, v, true));
     const loan = d.type === 'Дал в долг';
     const txt = loan ? '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>Когда вернут долг?</b> Выберите дату.' : '<tg-emoji emoji-id="5413879192267805083">🗓</tg-emoji> <b>Выберите дату брони</b>\nКрасные дни • — уже есть бронь.';
     return edit(ctx, mid, txt, await calendar(ctx, v, loan));
   }
-  if (k === 'cd' && d) { if (d.type === 'Дал в долг') d.due = v; else d.book = v; await gone(ctx, mid); return reshow(ctx, st); }
+  if (k === 'cd' && d) { if (st.await === 'until') { remember(st); d.until = v; st.await = null; await gone(ctx, mid); return askNext(ctx, cfg, st); }
+    if (d.type === 'Дал в долг') d.due = v; else d.book = v; await gone(ctx, mid); return reshow(ctx, st); }
   if (k === 'cord' && d) { d.ord = v; await gone(ctx, mid); return askNext(ctx, cfg, st); }
   if (k === 'cps' && d) { d.ord = 'new'; d.ps = v; await gone(ctx, mid); return askNext(ctx, cfg, st); }
   if (k === 'bd') { d.book = shiftYmd(todayYmd(), Number(v)); await gone(ctx, mid); return reshow(ctx, st); }
