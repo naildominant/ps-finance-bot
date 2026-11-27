@@ -1217,7 +1217,7 @@ async function supReminder(env) {
 }
 async function debtRows(ctx, cfg) {                         // кнопки долгов — на СТАРТ и в главном меню
   cfg = cfg || await config(ctx); const rows = [];
-  const b = await rentDue(ctx, cfg); if (b > 0) rows.push([[`👤 Брат: ${fmt(b)}`, 'dbro']]);
+  const b = await rentDue(ctx, cfg); if (b > 0) rows.push([[`💪 Брат: ${fmt(b)}`, 'dbro']]);   // 💪 — выбор владельца (27.11)
   const p = await supDue(ctx);
   if (p > 0) rows.push([[`🧾 Поставщик: ${fmt(p)}`, 'dsup']]);
   else if (await store(ctx, { op: 'get', k: 'supUnknown' })) rows.push([['🧾 Поставщик: долг ?', 'dsup']]);
@@ -1301,7 +1301,7 @@ async function goalsScreen(ctx) {
   const all = goalOrder(g).map(id => g.list[id]).sort((a, b) => a.done - b.done);
   const rows = [];
   try { const p = await fmToday(ctx); rows.push([[p.over ? '📊 Разбор месяца ⏳' : `📊 План до ${dm(p.fm.due)} · ${p.rem ? gShort(p.nal) + ' из ' + gShort(p.fm.plan) : 'закрыт ✅'}`, 'fp', p.rem && !p.over ? 'primary' : 'success']]); } catch (e) {}
-  rows.push([[`🔒 ФОНД: $${fmt(c.total)}`, 'gl:cush', mon >= CUSH_USD ? 'primary' : undefined]]);
+  rows.push([[`🔒 ФОНД: $${fmt(c.total)}`, 'gl:cush', mon >= CUSH_USD ? 'success' : mon > 0 ? 'primary' : undefined]]);   // $200 за месяц — зелёная
   for (const x of all) {
     if (x.done) { rows.push([[`✅ ${strike(x.name)}`, 'gl:' + x.id, 'success']]); continue; }
     const full = x.prog >= x.sum;
