@@ -2157,6 +2157,7 @@ export default {
       const msg = u.searchParams.get('msg'); if (msg) { const cfg = await config(ctx); ctx.chat = cfg.owners[0]; ctx.noTrack = true; await send(ctx, msg); }
       return Response.json(q);
     }
+    if (u.pathname === '/supget') { const c = { env, out: [] }; return Response.json({ debt: await store(c, { op: 'get', k: 'supDebt' }), unknown: await store(c, { op: 'get', k: 'supUnknown' }) }); }   // служебное: посмотреть долг поставщику
     if (u.pathname === '/supset') { const c = { env, out: [] }, rub = Number(u.searchParams.get('rub')); const v = { rub, usdt: null, uzs: Math.round(rub * RUB_TO_UZS), at: Date.now() }; await store(c, { op: 'put', k: 'supDebt', v }); await store(c, { op: 'put', k: 'supUnknown', v: false }); return Response.json(v); }   // служебное: долг поставщику в рублях
     if (u.pathname === '/claudevoice') { const c = { env, out: [] }; const said = await transcribe(c, await tgFile(c, u.searchParams.get('fid'))); const q = (await store(c, { op: 'get', k: 'claudeQ' })) || []; if (said) { q.push({ id: q.length + 1, at: Date.now(), text: said, done: false }); await store(c, { op: 'put', k: 'claudeQ', v: q }); } return Response.json({ said }); }
     if (u.pathname === '/reload') { await config({ env }, true); return new Response('reloaded'); }
