@@ -129,6 +129,13 @@ function parseDate(s) {
   if (!s || s === 'сегодня') return todayYmd();
   if (s === 'вчера') return shiftYmd(todayYmd(), -1);
   if (s === 'позавчера') return shiftYmd(todayYmd(), -2);
+  s = s.replace(/^(до|к|на)\s+/, '').replace(/\s*(г\.?|года?)$/, '').trim();
+  if (s === 'завтра') return shiftYmd(todayYmd(), 1);
+  { const MON = ['янв', 'фев', 'мар', 'апр', 'мая|май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];   // «8 марта», «20 декабря 2026» (владелец 28.11)
+    const w = s.match(/^(\d{1,2})\s+([а-яё]+)(?:\s+(\d{4}))?$/);
+    if (w) { const mi = MON.findIndex(x => new RegExp('^(' + x + ')').test(w[2]));
+      if (mi >= 0) { const t = todayYmd(); let y = w[3] || t.slice(0, 4); let r = `${y}-${String(mi + 1).padStart(2, '0')}-${w[1].padStart(2, '0')}`;
+        if (!w[3] && r < t) r = `${Number(y) + 1}${r.slice(4)}`; return r; } } }   // без года и уже прошло — значит следующий год
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/); if (m) return s;
   m = s.match(/^(\d{1,2})[.\/](\d{1,2})(?:[.\/](\d{2,4}))?$/);
   if (m) { const y = m[3] ? (m[3].length === 2 ? '20' + m[3] : m[3]) : todayYmd().slice(0, 4);
