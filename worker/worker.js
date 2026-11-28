@@ -445,6 +445,7 @@ async function askCard(ctx, cfg, st, side, q) {
   st.await = null; st.side = side; await putSt(ctx, st);
   const d = st.d, list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) =>
     isIn(d.type) ? c.inc.includes(d.dir) : isOut(d.type) ? c.exp.includes(d.dir) : true);
+  if (isOut(d.type) && d.dir === 'Личное' && /Благотвор/i.test(d.cat || '')) { const i = cfg.cards.findIndex(c => c.name.startsWith('Приёмка')); if (i >= 0 && !list.some(x => x.i === i)) list.push({ c: cfg.cards[i], i }); }   // благотворительность — можно и с ГЛАВНОЙ (владелец 28.11)
   const L = cardSort(list.length ? list : cfg.cards.map((c, i) => ({ c, i })));   // названия как в «Балансе» и тот же порядок — везде (владелец 27.11)
   await send(ctx, q, withBack(chunk(L.map(({ c, i }) => [cardLabel(c), 'k:' + i]), 2)));
 }
