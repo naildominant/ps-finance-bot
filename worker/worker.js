@@ -745,6 +745,8 @@ async function onWife(ctx, m, q, cfg) {
     return send(ctx, '🎤 Переслала Наилю' + (said ? ': «' + esc(said) + '»' : '.') + (said && /\d/.test(said) ? '\nЕсли это трата — нажмите «➖ Записать трату» и повторите.' : ''), [[['↩️ Меню', 'wm']]]);
   }
   const st = await getSt(ctx);
+  if (st.await === 'wdep' && !parseAmount(text) && /[a-zа-яё]/i.test(text)) {   // «-209069 на кафе» — это трата, не вклад (владелец 28.11)
+    await putSt(ctx, { dir: 'Личное', ptype: 'Расход' }); return onWife(ctx, m, null, cfg); }
   if (st.await === 'wdep') {                            // перевела на вклад
     const a = parseAmount(text); if (!a) return send(ctx, 'Напишите сумму числом, например <code>500000</code> 💕');
     const b = cardByWord(cfg, 'Булка'), v = cfg.cards.find(c => /^Вклад жены/i.test(c.name));
