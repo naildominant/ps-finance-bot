@@ -241,13 +241,14 @@ async function addSupRub(ctx, rub) {
   await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx);
 }
 // сохранить долг поставщику и показать СТАРТ
-async function setSupDebt(ctx, h) {
+async function setSupDebt(ctx, h, inc) {   // inc — после заявки PS SHOP (мишка «Доход»)
   const uzs = supRound(h.rub * RUB_TO_UZS);
   if (!ctx.dry) { await store(ctx, { op: 'put', k: 'supDebt', v: { ...h, uzs, at: Date.now() } }); await store(ctx, { op: 'put', k: 'supUnknown', v: false }); }
   await putSt(ctx, {});
   ctx.noTrack = true;
   await send(ctx, `🧾 <b>Долг поставщику: ${fmt(uzs)} сум</b>\n${h.usdt ? String(h.usdt).replace('.', ',') + ' USDT ≈ ' : ''}${String(h.rub).replace('.', ',')} RUB × ${RUB_TO_UZS}, округлил вверх` +
-    '\nОбщий долг обновлён, кнопка висит на СТАРТ.');
+    '\nПрошлые суммы стёрты, общий долг записан заново. Кнопка висит на СТАРТ.');
+  if (inc) await doneMark(ctx, 'Доход');
   ctx.noTrack = false; return startScreen(ctx);
 }
 
@@ -1197,7 +1198,7 @@ async function supScreen(ctx) {
   const t = due > 0 ? `🧾 <b>Поставщику: ${fmt(due)} сум</b>\n💳 На карте ПОСТАВЩИК: <b>${fmt(card)} сум</b>\n` +
     (top ? `👉 <b>Докинуть с основной карты: ${fmt(top)} сум</b>` : '✅ <b>На карте хватает, докидывать не нужно</b>')
     : `🧾 <b>Поставщику есть долг</b>, сумма не записана.\n💳 На карте ПОСТАВЩИК: <b>${fmt(card)} сум</b>`;
-  return send(ctx, t, [[['💸 Перевёл на карту поставщика', 'sut', 'primary']], [['✍️ Добавить рубли', 'sp:rub']], [['✅ Поставщик списал (оплатил)', 'supd']], [['↩️ Назад', 'st0']]]);
+  return send(ctx, t, [[['💸 Перевёл на карту поставщика', 'sut', 'primary']], [['✍️ Добавить рубли', 'sp:rub']], [['✍️ Написать общий долг', 'spall:']], [['✅ Поставщик списал (оплатил)', 'supd']], [['↩️ Назад', 'st0']]]);
 }
 async function supTopUp(ctx, cfg, amount) {
   const from = cardByWord(cfg, 'Приёмка'), to = cardByWord(cfg, 'Поставщик');
@@ -1459,9 +1460,13 @@ async function onMessage(ctx, m) {
   if (m.document) return send(ctx, 'Этот файл я не читаю. Пришлите фото, голосовое или текст.');
   if (!text) return;
   if (st.await === 'ns' && st.ns) return nsText(ctx, cfg, st, text);   // /newschet: сумма в банке или пометка
+  if (st.await === 'tool' && st.tool && st.tool.kind === 'hpsall') {   // «Написать общий долг»: заново, прошлые суммы стираются (владелец 28.11)
+    const r = num(text.replace(/руб[а-я.]*|₽|rub/ig, ''));
+    return r > 0 ? setSupDebt(ctx, { rub: r, usdt: null }, st.tool.inc) : send(ctx, 'Напишите общий долг в <b>рублях</b> числом, например <code>4607</code>.', [[BACK]]);
+  }
   if (st.await === 'tool' && st.tool && st.tool.kind === 'hpsadd') {   // рубли за заявку
     const r = num(text.replace(/руб[а-я.]*|₽|rub/ig, ''));
-    return r > 0 ? addSupRub(ctx, r) : send(ctx, 'Напишите рубли числом, например <code>400</code>, или нажмите «Позже».', [[['Позже', 'sp:later']]]);
+    return r > 0 ? addSupRub(ctx, r) : send(ctx, 'Напишите рубли числом, например <code>400</code>, или нажмите «Позже».', [[['✍️ Написать общий долг', 'spall:inc']], [['Позже', 'sp:later']]]);
   }
   { const h = parseHps(text); if (h) return setSupDebt(ctx, h); }   // пересланный ответ HPS на /report
   { const r = text.match(/^(?:долг\s*(?:поставщику)?\s*)?([\d\s.,]+)\s*(?:руб[а-я.]*|₽|rub)$/i);   // «4607 руб», «долг 4 607,72 ₽»
@@ -2332,6 +2337,10 @@ async function onCallback(ctx, q, again) {
   if (k === 'wi') { await gone(ctx, mid); return wInboxScreen(ctx); }   // ящик запросов жены
   if (k === 'xy' || k === 'xn' || k === 'xyf') return onRishatReq(ctx, cfg, k, v, mid);   // вложение по просьбе Ришата
   if (k === 'supd') { await gone(ctx, mid); return closeSupplier(ctx, cfg); }   // долг стирается в supplierDone, после ответа   // долг погашен до следующего /report
+  if (k === 'spall') {                               // «✍️ Написать общий долг» (владелец 28.11): весь долг заново, прошлые суммы стираются
+    await gone(ctx, mid); await putSt(ctx, { tool: { kind: 'hpsall', inc: v === 'inc' }, await: 'tool' });
+    return send(ctx, '✍️ <b>Общий долг поставщику</b>\nНапишите, сколько <b>рублей</b> вы должны поставщику сейчас всего, например <code>4607</code>.\nПрошлые суммы сотру и посчитаю заново.', [[BACK]]);
+  }
   if (k === 'sp') {                                  // после заявки PS SHOP: сколько рублей ушло поставщику
     await tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } });
     if (v === 'later') { await store(ctx, { op: 'put', k: 'supUnknown', v: true }); await putSt(ctx, {}); ctx.noTrack = true; await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx); }   // «Позже» → тоже мишка
@@ -2570,7 +2579,7 @@ async function onCallback(ctx, q, again) {
         mark = 'Доход';
       }
       if (!d.edit && d.dir === 'PS SHOP' && d.type === 'Доход' && d.cat !== 'Проценты по вкладу' && !(st.queue && st.queue.length)) {
-        await send(ctx, '🧾 <b>Поставщику?</b> Напишите, сколько <b>рублей</b> ушло на эту заявку, например <code>400</code>. Или нажмите «Позже».', [[['Позже', 'sp:later']]]);
+        await send(ctx, '🧾 <b>Поставщику?</b> Напишите, сколько <b>рублей</b> ушло на эту заявку, например <code>400</code>. Или нажмите «Позже».', [[['✍️ Написать общий долг', 'spall:inc']], [['Позже', 'sp:later']]]);
         ctx.noTrack = false; await putSt(ctx, { tool: { kind: 'hpsadd' }, await: 'tool' }); return;     // ждём рубли или «Позже»
       }
       if (!d.edit && d.dir === 'Leadex' && d.type === 'Доход') {
