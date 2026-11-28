@@ -20,7 +20,7 @@ async function tg(ctx, method, body) {
   return r.json();
 }
 // премиум-эмодзи владельца на кнопках: подпись → [текст, id эмодзи] («Назад» — только красная стрелка)
-const ICON = { '📄 Таблица': ['Таблица', '5319080489426887527'], 'Подписка': ['Подписка', '4900380749263275153'], 'СТАРТ': ['СТАРТ', '5409048419211682843'], 'Закрыл оплату поставщику ✅': ['Закрыл оплату поставщику', '5465154027970908359'], '+': ['Доход', '5253652327734192243'], '−': ['Расход', '5255775038010829248'], '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
+const ICON = { '🔄 Перевод': ['Перевод', '5127902823542948533'], '📄 Таблица': ['Таблица', '5319080489426887527'], 'Подписка': ['Подписка', '4900380749263275153'], 'СТАРТ': ['СТАРТ', '5409048419211682843'], 'Закрыл оплату поставщику ✅': ['Закрыл оплату поставщику', '5465154027970908359'], '+': ['Доход', '5253652327734192243'], '−': ['Расход', '5255775038010829248'], '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
   'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['LEADEX', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
 // цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
 const STYLE = { '+': 'success', '−': 'danger', 'СТАРТ': 'success', 'Оплата': 'success', 'Сегодня': 'primary', 'Завтра': 'primary', 'Послезавтра': 'primary', 'Другая дата': 'primary', 'Предоплата': 'primary', 'Залог': 'danger', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
@@ -46,6 +46,7 @@ const RENT_URL = 'https://docs.google.com/spreadsheets/d/1G9NgWFPksCyinTU7_QARyS
 const send = async (ctx, text, rows) => {
   if ((ctx.wife || ctx.rishat) && rows) rows = rows.map(r => r.filter(([t, d]) => !/^(ed|fx:|rm:)/.test(d || '')).map(([t, d, st]) => [t, /^(d:\d|st0|menu)$/.test(d || '') ? (ctx.rishat ? 'xm' : 'wm') : d, st])).filter(r => r.length);   // жене и Ришату: без правки/удаления   // жена: «Назад» → её меню
   if (ctx.viewer && rows) rows = rows.map(r => r.map(([t, d, st]) => [t, /^(d:\d|bk|st0|menu)$/.test(d || '') ? 'vm' : d, st]));   // брат: назад → меню аренды
+  if (ctx.editMid && ctx.editMid === ctx.pinMid) ctx.editMid = null;   // закреплённый СТАРТ меню не становится
   if (ctx.editMid) {                                       // «Назад»: экран меняется на месте, без анимации удаления (владелец 26.11)
     const mid = ctx.editMid; ctx.editMid = null;
     const e = await tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: mid, text: premium(text), parse_mode: 'HTML', reply_markup: kb(rows || []) });
@@ -58,7 +59,7 @@ const send = async (ctx, text, rows) => {
 // чистый чат (владелец 26.11): нажатая кнопка-вопрос удаляется; подсказки и сообщения владельца стираются при возврате в меню.
 // Остаются: «✅ Записано», расчёты долей, эмодзи дохода/расхода.
 const unkb = (ctx, mid) => tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } }).catch(() => {});   // убрать кнопки, сообщение оставить
-const gone = (ctx, mid) => tg(ctx, 'deleteMessage', { chat_id: ctx.chat, message_id: mid }).catch(() => {});
+const gone = (ctx, mid) => (ctx.pinMid && mid === ctx.pinMid) ? Promise.resolve() : tg(ctx, 'deleteMessage', { chat_id: ctx.chat, message_id: mid }).catch(() => {});   // закреплённый СТАРТ не удаляем
 async function purge(ctx) {
   if (ctx.wife || ctx.rishat) return;                     // у жены и Ришата свой чат — общий «след» владельца не трогаем
   const ids = [...((await store(ctx, { op: 'get', k: 'trail' })) || []), ...(ctx.trail || [])].filter(i => !(ctx.keep || []).includes(i) && i !== ctx.editMid);
@@ -360,7 +361,7 @@ const putSt = (ctx, st) => store(ctx, { op: 'put', k: stKey(ctx), v: st });
 function summary(d) {
   const L = [];
   L.push(`<b>${d.edit ? '✏️ Исправление записи ' + d.edit : 'Проверьте запись'}</b>${d.of > 1 && !d.edit ? ` (${d.n} из ${d.of})` : ''}`);
-  L.push(`🏢 ${d.dir === 'Leadex' ? 'LEADEX' : d.dir}`);
+  { const di = ICON[d.dir] && ICON[d.dir][1]; L.push(`${di ? `<tg-emoji emoji-id="${di}">🏢</tg-emoji>` : '🏢'} ${d.dir === 'Leadex' ? 'LEADEX' : d.dir}`); }   // значок направления — как на кнопке меню (владелец 28.11)
   L.push(`🔄 ${d.type || '—'}`);
   L.push(`💰 ${d.amount != null ? (d.cur === '$' ? '$' + d.amount : fmt(d.amount) + ' сум') : '—'}`);
   if (needsCat(d.type)) L.push(`🏷 ${d.cat ? (d.group === d.cat || String(d.cat).startsWith(d.group) ? d.cat : d.group + ' / ' + d.cat) : '—'}`);
@@ -475,7 +476,7 @@ async function doneMark(ctx, type) {
 async function wipeChat(ctx, m, key) {                    // /start: стереть переписку выше в этом чате
   const from = Math.max(1, ((await store(ctx, { op: 'get', k: key })) || m.message_id - 1000));
   for (let hi = m.message_id; hi >= from; hi -= 100) {
-    const ids = []; for (let i = hi; i > Math.max(from - 1, hi - 100); i--) ids.push(i);
+    const ids = []; for (let i = hi; i > Math.max(from - 1, hi - 100); i--) if (i !== ctx.pinMid) ids.push(i);
     await tg(ctx, 'deleteMessages', { chat_id: ctx.chat, message_ids: ids }).catch(() => {});
   }
   await store(ctx, { op: 'put', k: key, v: m.message_id });
@@ -1827,14 +1828,27 @@ async function debtRows(ctx, cfg) {                         // кнопки до
 async function startScreen(ctx) {
   if (ctx.rishat) return rishatStart(ctx);
   if (ctx.wife) return wifeStart(ctx);
-  await purge(ctx); await putSt(ctx, {});
+  await putSt(ctx, {});
+  await pinStart(ctx);                                    // СТАРТ закреплён сверху и обновляется (задача 30)
+  return dirMenu(ctx);                                    // снизу — главное меню
+}
+// закреплённый СТАРТ (владелец 28.11, задача 30): одно сообщение сверху, бот его правит при каждом изменении; удалили — пришлёт и закрепит заново
+async function pinStart(ctx) {
   const cfg = await config(ctx);
-  const rows = [[['СТАРТ', 'menu']]];
-  rows.push(...await debtRows(ctx, cfg));
-  const lg = await tg(ctx, 'sendSticker', { chat_id: ctx.chat, sticker: LOGO_STICKER });   // лого владельца сверху (27.11)
-  if (lg && lg.ok && ctx.trail) ctx.trail.push(lg.result.message_id);
+  const rows = [[['СТАРТ', 'menu']], ...await debtRows(ctx, cfg)];
   let plan = ''; try { plan = fmLine(await fmToday(ctx)) + '\n\n'; } catch (e) {}   // дневной план всегда на СТАРТ (задача 17)
-  return send(ctx, plan + PAD(9) + '👇' + PAD(9), rows);
+  const text = premium(plan + PAD(9) + '👇' + PAD(9));
+  const pin = ctx.pinMid || await store(ctx, { op: 'get', k: 'pinMid' });
+  if (pin) {
+    const e = await tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: pin, text, parse_mode: 'HTML', reply_markup: kb(rows) });
+    if (e && (e.ok || /not modified/i.test(e.description || ''))) { ctx.pinMid = pin; return; }
+  }
+  await tg(ctx, 'sendSticker', { chat_id: ctx.chat, sticker: LOGO_STICKER });   // лого владельца над СТАРТ (27.11)
+  const r = await tg(ctx, 'sendMessage', { chat_id: ctx.chat, text, parse_mode: 'HTML', reply_markup: kb(rows) });
+  if (!r || !r.ok) return;
+  const mid = r.result.message_id; ctx.pinMid = mid;
+  if (!ctx.dry) { await tg(ctx, 'unpinAllChatMessages', { chat_id: ctx.chat }).catch(() => {}); await tg(ctx, 'pinChatMessage', { chat_id: ctx.chat, message_id: mid, disable_notification: true }).catch(() => {});
+    await store(ctx, { op: 'put', k: 'pinMid', v: mid }); }
 }
 
 // ---------- LEADEX (владелец 27.11): сделки. Предоплата — «облако» (чужие деньги), Поступление закрывает сделку и делит всё ----------
@@ -2092,7 +2106,7 @@ const fmLine = s => {                                 // строка плана
   const L = [`📊 <b>План до ${dm(s.fm.due)}:</b>`, '', `💵 Нал: <b>${gShort(s.nal)}</b> (${s.pct}%)`, `📈 План: <b>${gShort(s.fm.plan)}</b>`];
   if (!s.rem) return [...L, '', '✅ <b>План закрыт!</b>'].join('\n');
   L.push(`⏳ Не хватает: <b>${gShort(s.rem)}</b>`, '');
-  L.push(`🎯 Сегодня отложить: <b>${gShort(s.need)}</b>`);
+  L.push(`<tg-emoji emoji-id="5388721082029061513">🎯</tg-emoji> Сегодня отложить: <b>${gShort(s.need)}</b>`);   // эмодзи владельца (28.11)
   return L.join('\n');
 };
 async function fmScreen(ctx) {
@@ -2101,7 +2115,7 @@ async function fmScreen(ctx) {
   { const c = await cashPool(ctx); L.push(`💰 Собрано: <b>${fmt(s.nal)}</b> из ${fmt(f.plan)} (${s.pct}%)`, `   💵 Нал ${fmt(c.sum)}` + (c.usd ? ` + $${fmt(c.usd)} свободных (кроме подушки)` : '')); }
   if (s.over) L.push('⏳ Месяц закончился — пора на разбор.');
   else if (s.rem) { const days = Math.round((Date.parse(f.end) - Date.parse(todayYmd())) / DAY) + 1;
-    L.push(`Осталось: ${fmt(s.rem)} · дней: ${days}`, `🎯 <b>Сегодня отложить в Нал: ${fmt(s.need)}</b> (день ×${String(fmW(todayYmd())).replace('.', ',')})` ,
+    L.push(`Осталось: ${fmt(s.rem)} · дней: ${days}`, `<tg-emoji emoji-id="5388721082029061513">🎯</tg-emoji> <b>Сегодня отложить в Нал: ${fmt(s.need)}</b> (день ×${String(fmW(todayYmd())).replace('.', ',')})` ,
       'Не отложили — остаток сам разложится на следующие дни.', 'Доллары сверх подушки считаются как нал.'); }
   else L.push('✅ <b>План закрыт!</b>');
   L.push('', `<b>Расходы на месяц</b> (${f.src === 'факт' ? 'по факту прошлого месяца' : 'по опросу'}): ${fmt(f.exp.reduce((a, e) => a + e[1], 0))}`);
@@ -2594,6 +2608,7 @@ async function handle(ctx, upd) {
   if (q && q.data === 'noop') return tg(ctx, 'answerCallbackQuery', { callback_query_id: q.id });
   if (q && q.message) { ctx.orig = q.message.text || ''; ctx.origMid = q.message.message_id; }
   ctx.trail = m ? [m.message_id] : [];
+  ctx.pinMid = (await store(ctx, { op: 'get', k: 'pinMid' })) || null;   // закреплённый СТАРТ — не удалять и не перезаписывать меню
   if (q && q.message && q.message.reply_markup) {        // нажата кнопка с премиум-эмодзи → бот присылает этот эмодзи (владелец 26.11)
     const b = q.message.reply_markup.inline_keyboard.flat().find(b => b.callback_data === q.data);
     if (b && b.icon_custom_emoji_id) await send(ctx, `<tg-emoji emoji-id="${b.icon_custom_emoji_id}">⭐</tg-emoji>`);
