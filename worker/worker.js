@@ -2738,6 +2738,12 @@ export default {
       await store(ctx, { op: 'put', k: 'pendShare', v: false }); await store(ctx, { op: 'put', k: 'pendDone', v: null });
       return Response.json(await getOrds(ctx));
     }
+    if (u.pathname === '/wreqdrop') {                         // служебное: убрать запросы жены по номерам ?ids=W6,W7 (тестовые); &dry=1 — тестовая копия; &list=1 — показать
+      const c = { env, out: [], dry: !!u.searchParams.get('dry') }, R = (await store(c, { op: 'get', k: 'wreq' })) || { _n: 0 }, gone = [];
+      if (u.searchParams.get('list')) return Response.json(Object.values(R).filter(x => x && x.id).map(x => ({ id: x.id, kind: x.kind, name: x.name || x.what || x.text, amount: x.amount, done: x.done, seen: x.seen })));
+      for (const id of (u.searchParams.get('ids') || '').split(',')) if (R[id]) { delete R[id]; gone.push(id); }
+      await store(c, { op: 'put', k: 'wreq', v: R }); return Response.json({ removed: gone });
+    }
     if (u.pathname === '/ord') {                              // служебное: открыть/закрыть заказ ?id=A1&closed=0|1
       const ctx = { env, out: [] }; const m = await getOrds(ctx), o = m[u.searchParams.get('id')];
       if (o) { o.closed = u.searchParams.get('closed') === '1'; await putOrds(ctx, m); }
