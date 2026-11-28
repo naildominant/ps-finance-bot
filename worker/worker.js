@@ -20,7 +20,7 @@ async function tg(ctx, method, body) {
   return r.json();
 }
 // премиум-эмодзи владельца на кнопках: подпись → [текст, id эмодзи] («Назад» — только красная стрелка)
-const ICON = { '🔄 Перевод': ['Перевод', '5127902823542948533'], '📄 Таблица': ['Таблица', '5319080489426887527'], 'Подписка': ['Подписка', '4900380749263275153'], 'СТАРТ': ['СТАРТ', '5409048419211682843'], 'Закрыл оплату поставщику ✅': ['Закрыл оплату поставщику', '5465154027970908359'], '+': ['Доход', '5253652327734192243'], '−': ['Расход', '5255775038010829248'], '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
+const ICON = { '🔄 Перевод': ['Перевод', '5377336227533969892'], '📄 Таблица': ['Таблица', '5319080489426887527'], 'Подписка': ['Подписка', '4900380749263275153'], 'СТАРТ': ['СТАРТ', '5409048419211682843'], 'Закрыл оплату поставщику ✅': ['Закрыл оплату поставщику', '5465154027970908359'], '+': ['Доход', '5253652327734192243'], '−': ['Расход', '5255775038010829248'], '↩️ Назад': [' ', '5215261582170278752'], '💳 Баланс': ['Баланс', '5472250091332993630'], '📄 Открыть таблицу': ['Открыть таблицу', '5319080489426887527'],
   'PS SHOP': ['PS SHOP', '5408830063074365909'], 'Аренда PS5': ['Аренда PS5', '5309830839268298113'], 'Leadex': ['LEADEX', '4943195336911881191'], 'Личное': ['Личное', '5467814330714041218'] };
 // цвета кнопок (владелец 26.11): primary синий, success зелёный, danger красный
 const STYLE = { '+': 'success', '−': 'danger', 'СТАРТ': 'success', 'Оплата': 'success', 'Сегодня': 'primary', 'Завтра': 'primary', 'Послезавтра': 'primary', 'Другая дата': 'primary', 'Предоплата': 'primary', 'Залог': 'danger', 'Закрыл оплату поставщику ✅': 'primary', 'PS SHOP': 'primary', 'Аренда PS5': 'success', 'Leadex': 'danger', 'Личное': 'primary' };
@@ -1064,9 +1064,10 @@ async function rentEndReminders(ctx) {
   for (const o of ordList(m)) {
     if (!o.until || o.until !== today || o.warned === today) continue;
     const per = o.per ? Object.values(o.per).find(p => p[1] === o.until) : null, who = (o.ps ? o.ps + ' ' : '') + o.id;
-    await send(ctx, `⏰ <b>Сегодня заканчивается аренда ${who}</b>${per ? ' (' + dm(per[0]) + '–' + dm(per[1]) + ')' : ''}\nПродлевает или сдаёт?`,
-      [[['🔄 Продлевает', 'ae:' + o.id, 'primary']], [['✅ Сдал приставку', 'ax:' + o.id, 'success']]]);
-    await rentNotify(ctx, `⏰ <b>Сегодня заканчивается аренда ${who}</b> — продлевает или сдаёт?`).catch(() => {});
+    const r = await send(ctx, `⏰ <b>Сегодня заканчивается аренда ${who}</b>${per ? ' (' + dm(per[0]) + '–' + dm(per[1]) + ')' : ''}\nПродлевает или возвращает?`,
+      [[['🔄 Продлевает', 'ae:' + o.id, 'primary']], [['✅ Возвращает', 'ax:' + o.id, 'success']]]);
+    if (r && r.ok && !ctx.dry) { o.pinRem = r.result.message_id; await tg(ctx, 'pinChatMessage', { chat_id: ctx.chat, message_id: o.pinRem, disable_notification: true }).catch(() => {}); }   // закреп до ответа (задача 33)
+    await rentNotify(ctx, `⏰ <b>Сегодня заканчивается аренда ${who}</b> — продлевает или возвращает?`).catch(() => {});
     o.warned = today; n++;
   }
   if (n && !ctx.dry) await store(ctx, { op: 'put', k: 'ords', v: m });
@@ -1847,7 +1848,8 @@ async function pinStart(ctx) {
   const r = await tg(ctx, 'sendMessage', { chat_id: ctx.chat, text, parse_mode: 'HTML', reply_markup: kb(rows) });
   if (!r || !r.ok) return;
   const mid = r.result.message_id; ctx.pinMid = mid;
-  if (!ctx.dry) { await tg(ctx, 'unpinAllChatMessages', { chat_id: ctx.chat }).catch(() => {}); await tg(ctx, 'pinChatMessage', { chat_id: ctx.chat, message_id: mid, disable_notification: true }).catch(() => {});
+  if (!ctx.dry) { if (pin) await tg(ctx, 'unpinChatMessage', { chat_id: ctx.chat, message_id: pin }).catch(() => {});   // только старый СТАРТ — закреп напоминаний не трогаем
+    await tg(ctx, 'pinChatMessage', { chat_id: ctx.chat, message_id: mid, disable_notification: true }).catch(() => {});
     await store(ctx, { op: 'put', k: 'pinMid', v: mid }); }
 }
 
@@ -2356,7 +2358,10 @@ async function onCallback(ctx, q, again) {
     return askNext(ctx, cfg, { d, queue: [], dir: 'Leadex' });
   }
   if (k === 'ae' || k === 'ax') {                    // кнопки напоминания об окончании аренды
-    const o = (await getOrds(ctx))[v]; await gone(ctx, mid);
+    const mo = await getOrds(ctx), o = mo[v];
+    await tg(ctx, 'unpinChatMessage', { chat_id: ctx.chat, message_id: mid }).catch(() => {});   // ответил — снимаем закреп (задача 33)
+    if (o && o.pinRem) { delete o.pinRem; await store(ctx, { op: 'put', k: 'ords', v: mo }); }
+    await gone(ctx, mid);
     if (!o || o.closed) return send(ctx, 'Этот заказ уже закрыт.', [[BACK]]);
     const nst = { dir: 'Аренда PS5', ord: o.id, ps: o.ps || '' }; await putSt(ctx, nst);
     if (k === 'ae') return onCallback(ctx, { ...q, data: `ao:in|${o.id}` }, true);   // продление: сумма → новый срок
