@@ -173,7 +173,7 @@ function parseAmount(s) {
 }
 // несколько сумм в одном ответе: «100$ и 500к», «$100 + 500000» → [{amount, cur}, …]
 function parseAmounts(s) {
-  const parts = String(s).split(/\s+и\s+|\+|;|,\s+/).map(x => x.trim()).filter(Boolean);
+  const parts = String(s).split(/\s+и\s+|\+|;|,\s+|\n+/)   // и с новой строки: несколько приходов сразу (владелец 28.11).map(x => x.trim()).filter(Boolean);
   const out = parts.map(parseAmount);
   return out.length > 1 && out.every(Boolean) ? out : null;
 }
@@ -1579,7 +1579,7 @@ async function startDraft(ctx, cfg, dir, text, src) {
   try { recs = await aiParse(ctx, cfg, dir, text); } catch (e) { recs = []; }
   if (!recs.length) recs = [{}];
   const single = recs.length === 1;
-  if (ctx.ptype && single) recs[0].type = ctx.ptype;      // выбран ➕/➖ — тип не спрашиваем
+  if (ctx.ptype && (single || ctx.ptype === 'Доход' || ctx.ptype === 'Расход')) recs.forEach(r => { r.type = ctx.ptype; });      // выбран ➕/➖ — тип не спрашиваем (и для нескольких записей сразу)
   const drafts = recs.map(p => draftFrom(cfg, dir, p, text, single));
   if (src) drafts.forEach(d => { d.src = src; });
   if (ctx.ord && single && drafts[0].dir === 'Аренда PS5') { drafts[0].ord = ctx.ord; drafts[0].ps = ctx.ps || ''; }   // выбранный клиент аренды
