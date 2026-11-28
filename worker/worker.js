@@ -2757,6 +2757,7 @@ export default {
       }
       return Response.json(ids);
     }
+    if (u.pathname === '/goals') { const c = { env, out: [] }; const g = await goalProg(c, await getGoals(c)); return Response.json({ order: goalOrder(g), list: g.list, flat: g.flat || null, cush: g.cush }); }   // служебное: цели (только чтение)
     if (u.pathname === '/cushset') {                         // служебное: подушка ?total=$&month=$ (за текущий финмесяц)
       const ctx = { env, out: [] }, g = await getGoals(ctx);
       if (u.searchParams.get('total')) g.cush.total = Number(u.searchParams.get('total'));
