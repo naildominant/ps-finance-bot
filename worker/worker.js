@@ -46,7 +46,7 @@ const RENT_URL = 'https://docs.google.com/spreadsheets/d/1G9NgWFPksCyinTU7_QARyS
 const send = async (ctx, text, rows) => {
   if ((ctx.wife || ctx.rishat) && rows) rows = rows.map(r => r.filter(([t, d]) => !/^(ed|fx:|rm:)/.test(d || '')).map(([t, d, st]) => [t, /^(d:\d|st0|menu)$/.test(d || '') ? (ctx.rishat ? 'xm' : 'wm') : d, st])).filter(r => r.length);   // жене и Ришату: без правки/удаления   // жена: «Назад» → её меню
   if (ctx.viewer && rows) rows = rows.map(r => r.map(([t, d, st]) => [t, /^(d:\d|bk|st0|menu)$/.test(d || '') ? 'vm' : d, st]));   // брат: назад → меню аренды
-  if (ctx.editMid && ctx.editMid === ctx.pinMid) ctx.editMid = null;   // закреплённый СТАРТ меню не становится
+  if (ctx.editMid && (KEEP_ALL || ctx.editMid === ctx.pinMid)) ctx.editMid = null;   // KEEP_ALL: не заменяем экран на месте — новое сообщение   // закреплённый СТАРТ меню не становится
   if (ctx.editMid) {                                       // «Назад»: экран меняется на месте, без анимации удаления (владелец 26.11)
     const mid = ctx.editMid; ctx.editMid = null;
     const e = await tg(ctx, 'editMessageText', { chat_id: ctx.chat, message_id: mid, text: premium(text), parse_mode: 'HTML', reply_markup: kb(rows || []) });
@@ -59,8 +59,12 @@ const send = async (ctx, text, rows) => {
 // чистый чат (владелец 26.11): нажатая кнопка-вопрос удаляется; подсказки и сообщения владельца стираются при возврате в меню.
 // Остаются: «✅ Записано», расчёты долей, эмодзи дохода/расхода.
 const unkb = (ctx, mid) => tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } }).catch(() => {});   // убрать кнопки, сообщение оставить
-const gone = (ctx, mid) => (ctx.pinMid && mid === ctx.pinMid) ? Promise.resolve() : tg(ctx, 'deleteMessage', { chat_id: ctx.chat, message_id: mid }).catch(() => {});   // закреплённый СТАРТ не удаляем
+const KEEP_ALL = true;                                    // владелец 28.11: пока НИЧЕГО не стирать — каждое действие новым сообщением (потом вернём чистку)
+const gone = (ctx, mid) => (ctx.pinMid && mid === ctx.pinMid) || !mid ? Promise.resolve()
+  : KEEP_ALL ? tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: { inline_keyboard: [] } }).catch(() => {})   // сообщение остаётся, кнопки убираем
+  : tg(ctx, 'deleteMessage', { chat_id: ctx.chat, message_id: mid }).catch(() => {});   // закреплённый СТАРТ не удаляем
 async function purge(ctx) {
+  if (KEEP_ALL) { if (ctx.trail) ctx.trail.length = 0; return; }   // ничего не стираем (владелец 28.11)
   if (ctx.wife || ctx.rishat) return;                     // у жены и Ришата свой чат — общий «след» владельца не трогаем
   const ids = [...((await store(ctx, { op: 'get', k: 'trail' })) || []), ...(ctx.trail || [])].filter(i => !(ctx.keep || []).includes(i) && i !== ctx.editMid);
   if (ctx.trail) ctx.trail.length = 0;
@@ -481,8 +485,8 @@ async function wipeChat(ctx, m, key) {                    // /start: стере�
   }
   await store(ctx, { op: 'put', k: key, v: m.message_id });
 }
-const USER_WIPE = true;                                   // жена и брат: /start тоже стирает их чат (владелец 28.11) — не зависит от TEST_WIPE
-const TEST_WIPE = true;                                   // /start стирает чат — только на время теста (выключить на запуске)
+const USER_WIPE = false;   // выключено 28.11 (KEEP_ALL), было true —                                   // жена и брат: /start тоже стирает их чат (владелец 28.11) — не зависит от TEST_WIPE
+const TEST_WIPE = false;   // выключено 28.11 (KEEP_ALL), было true —                                   // /start стирает чат — только на время теста (выключить на запуске)
 // накопление (владелец 26.11): ВКЛАД = копилка на 14 000 000 сум к 06.01.2027 (вклад больше не резерв PS SHOP)
 const GOAL_SUM = 14000000, GOAL_DATE = '05.01.2027';
 const PS_RESERVE = 0;                                      // резерв PS SHOP: пока 0% — вся прибыль владельцу (26.11; было 20%)
