@@ -80,12 +80,16 @@ const edit = (ctx, mid, text, rows) => {
 };
 
 // ---------- Google Таблица (через Apps Script) ----------
-async function gas(ctx, ops) {
+async function gas(ctx, ops) {                            // задача 40: чтения за одно действие — из памяти; любая запись сбрасывает память
   const write = ops.some(o => o.op !== 'get' && o.op !== 'find');
+  const key = o => o.op + '|' + o.sheet + '|' + (o.range || o.col + '=' + o.value);
+  if (!write) { ctx.gc = ctx.gc || {}; if (ops.every(o => ctx.gc[key(o)])) return ops.map(o => ctx.gc[key(o)]); }
+  else ctx.gc = {};
   if (ctx.dry && write) { ctx.out.push({ gas: ops }); return ops.map(() => ({ row: 999 })); }
   const r = await fetch(ctx.env.GAS_URL, { method: 'POST', body: JSON.stringify({ key: ctx.env.GAS_KEY, ops }) });
   const j = await r.json();
   if (!j.ok) throw new Error('Таблица: ' + j.error);
+  if (!write) ops.forEach((o, n) => { ctx.gc[key(o)] = j.res[n]; });
   return j.res;
 }
 
@@ -457,7 +461,7 @@ async function askCard(ctx, cfg, st, side, q) {
   await send(ctx, q, withBack(await cardBtns(ctx, L, i => 'k:' + i)));
 }
 // кнопки карт с остатком «⭐ ГЛАВНАЯ: 1 220 641» (владелец 28.11) — остаток берём из таблицы прямо сейчас, по одной в строке
-async function liveBal(ctx) { try { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]); const m = {}; for (const r of g.values) if (r[0]) m[r[0]] = { v: Number(r[8]) || 0, usd: r[2] === '$' }; return m; } catch (e) { return {}; } }
+async function liveBal(ctx) { try { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]); const m = {}; for (const r of g.values) if (r[0]) m[r[0]] = { v: Number(r[8]) || 0, usd: r[2] === '$' }; return m; } catch (e) { return {}; } }
 async function cardBtns(ctx, list, cb) {
   const B = await liveBal(ctx);
   return cardSort(list).map(({ c, i }) => { const b = B[c.name]; const v = b ? (b.usd ? '$' + fmt(b.v) : fmt(b.v)) : null; return [[cardLabel(c) + (v != null ? ': ' + v : ''), cb(i)]]; });
@@ -570,7 +574,7 @@ async function setItem(ctx, x, sum, status) { await gas(ctx, [{ op: 'set', sheet
 // ---------- /newschet: выравнивание остатков по всем картам (владелец 27.11, задача 19; временная команда) ----------
 const NS_ORDER = TR_NAMES.filter(([k]) => k !== 'Арс');   // 4 главные первыми, потом остальные; карту брата не спрашиваем
 async function nsStart(ctx) {
-  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]);
   const all = g.values.filter(r => r[0] && r[2]);
   const cards = NS_ORDER.map(([w, t]) => { const r = all.find(r => String(r[0]).startsWith(w)); return r && { card: r[0], t: t.replace(/^\S+\s/, ''), usd: r[2] === '$' }; }).filter(Boolean);
   const ns = { cards, i: 0, res: [] };
@@ -582,7 +586,7 @@ const nsAmt = (c, v) => c.usd ? '$' + fmt(v) : fmt(v) + ' сум';
 async function nsAsk(ctx, ns) {
   if (ns.i >= ns.cards.length) return nsFinish(ctx, ns);
   const c = ns.cards[ns.i];
-  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]);
   const r = g.values.find(r => String(r[0]) === c.card); c.now = Number(r && r[8]) || 0;
   await putSt(ctx, { await: 'ns', ns });
   return send(ctx, `🧮 <b>${ns.i + 1}/${ns.cards.length}. ${esc(c.t)}</b>\nПо записям: <b>${nsAmt(c, c.now)}</b>\nСколько сейчас в банке?`,
@@ -651,7 +655,7 @@ async function wifeMenu(ctx) {                            // девчачий с
   return send(ctx, '🌸 <b>Привет, солнышко!</b> 💖\nЧто делаем сегодня? ✨', [[['🛍 Записать трату', 'wx', 'danger']], [['💳 Моя BULKA', 'wb'], ['💎 Мой вклад', 'wv']],
     [['🧾 Наши расходы', 'we'], ['🎯 Наши цели', 'wg']], [['🎀 Хочу цель', 'wq', 'primary'], ['💸 Дай денюжку', 'wd', 'success']]]);
 }
-async function cardBal(ctx, re) { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]); const r = g.values.find(r => re.test(String(r[0] || ''))); return r ? Number(r[8]) || 0 : 0; }
+async function cardBal(ctx, re) { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]); const r = g.values.find(r => re.test(String(r[0] || ''))); return r ? Number(r[8]) || 0 : 0; }
 const wifeCal = rows => rows.map(r => r.map(b => b[1] === 'bk' ? ['↩️ Меню', 'wm'] : b));
 async function wifeDep(ctx) {
   const v = await cardBal(ctx, /^Вклад жены/i);
@@ -679,7 +683,7 @@ async function wInboxScreen(ctx) {
   return send(ctx, '👆', [[['↩️ Назад', 'menu']]]);
 }
 async function wifeBulka(ctx) {
-  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]);
   const r = g.values.find(r => /^Булка/.test(String(r[0] || ''))), v = r ? Number(r[8]) || 0 : 0;
   return send(ctx, `💳 <b>BULKA CARD</b>\n\nСейчас на карте: <b>${fmt(v)} сум</b>`, [[['↩️ Меню', 'wm']]]);
 }
@@ -942,7 +946,7 @@ async function onTool(ctx, q) {
   if (k === 'adj') {
     await gone(ctx, mid);
     await putSt(ctx, {});                                   // «Баланс» только показывает остатки (владелец 26.11); исправление — не здесь
-    const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
+    const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]);
     // порядок и подписи (владелец 26.11); карту брата не показываем — её смотрит брат
     const ORDER = [['Приёмка', 'ГЛАВНАЯ', '⭐ <b>Основные</b>'], ['Apple Pay', 'APPLE PAY'], ['Поставщик', 'ПОСТАВЩИК', '—'], ['Капитал', 'АРЕНДНАЯ'], ['Нал', 'НАЛ', '—'],
       ['Расходка', 'PSРАСХОДЫ'], ['Ипак', 'ИПАК'], ['Доллары', 'ДОЛЛАРЫ', '—'], ['UZUM вклад', 'ВКЛАД'], ['Булка', 'BULKA CARD'], ['Вклад жены', 'ВКЛАД ЖЕНЫ']];   // Булка — накопительная, в конце (владелец 27.11, /claude №5)
@@ -1018,7 +1022,7 @@ async function onToolText(ctx, cfg, st, text) {
   if (t.kind === 'sup') return supplierDone(ctx, cfg, t.card, a.amount);
   if (t.kind === 'sut') { await putSt(ctx, {}); return supTopUp(ctx, cfg, a.amount); }
   if (t.kind === 'interest') {          // 1-е число: проценты по UZUM вкладу → доход PS SHOP
-    const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+    const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]);
     const r = g.values.find(r => String(r[0]) === t.card); const now = Number(r && r[8]) || 0;
     const diff = Math.round(a.amount - now);
     await putSt(ctx, {});
@@ -1028,7 +1032,7 @@ async function onToolText(ctx, cfg, st, text) {
     return send(ctx, `💰 Банк добавил на «${t.card}»: +${fmt(diff)} сум (${rid}). На вкладе теперь ${fmt(a.amount)}.`, [[['🗑 Отменить', 'rm:' + rid]]]);
   }
   if (t.kind === 'adj') {
-    const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+    const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]);
     const r = g.values.find(r => String(r[0]) === t.card); const now = Number(r && r[8]) || 0;
     const diff = Math.round((a.amount - now) * 100) / 100;
     await putSt(ctx, {});
@@ -1111,7 +1115,7 @@ async function morning(env) {
 async function leadexSplit(ctx, cfg, id, amount) {
   ctx.noTrack = true;
   const last = (await store(ctx, { op: 'get', k: 'lxLast' })) || 0;
-  const [j, debt] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: 'A2:M3000' }, { op: 'get', sheet: 'Долги и накопления', range: 'F6' }]);
+  const [j, debt] = await gas(ctx, [{ op: 'get', sheet: 'Журнал', range: 'A2:P3000' }, { op: 'get', sheet: 'Долги и накопления', range: 'F6' }]);
   const lxRows = j.values.filter(r => r[3] === 'Leadex' && r[4] === 'Расход' && r[12] !== 'удалено' && r[1] && r[1].d > last);
   const exp = lxRows.reduce((a, r) => a + (Number(r[7]) || 0), 0);
   const rback = lxRows.filter(r => r[10] === RISHAT_SRC).reduce((a, r) => a + (Number(r[7]) || 0), 0);   // свои деньги Ришата — вернуть ему до 50/50 (задача 24, В3)
@@ -1185,7 +1189,7 @@ const cardByWord = (cfg, w) => cfg.cards.find(c => c.name.toLowerCase().startsWi
 // экран долга поставщику (владелец 27.11, /claude №8): долг, остаток на карте ПОСТАВЩИК, сколько докинуть с ГЛАВНОЙ (вверх до 10 000)
 async function supNums(ctx) {
   const due = (await store(ctx, { op: 'get', k: 'supUnknown' })) ? 0 : await supDue(ctx);
-  let card = 0; try { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]); const r = g.values.find(r => String(r[0]).startsWith('Поставщик')); card = Math.round(Number(r && r[8]) || 0); } catch (e) {}
+  let card = 0; try { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]); const r = g.values.find(r => String(r[0]).startsWith('Поставщик')); card = Math.round(Number(r && r[8]) || 0); } catch (e) {}
   return { due, card, top: due > card ? supRound(due - card) : 0 };
 }
 async function supScreen(ctx) {
@@ -1208,7 +1212,7 @@ async function closeSupplier(ctx, cfg) {
 }
 async function supplierDone(ctx, cfg, card, left) {
   ctx.noTrack = true;
-  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]);
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]);
   const r = g.values.find(r => String(r[0]) === card); const before = Number(r && r[8]) || 0;
   const paid = Math.round(before - left);
   await putSt(ctx, {});
@@ -1243,7 +1247,7 @@ async function supplierDone(ctx, cfg, card, left) {
 // вернулось = остаток карты Арс (по курсу ЦБ). Доли НЕ меняются автоматически (владелец 27.11: «сначала закроем долг, там решим») — всегда брату 60%, Наилю 40%.
 async function rentInvState(ctx, cfg, profit) {
   const inv = (await store(ctx, { op: 'get', k: 'rentInv' })) || null;
-  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]);
   const r = g.values.find(r => /^Арс/.test(String(r[0] || ''))), ars = r ? Number(r[8]) || 0 : 0, rate = await cbuRate(ctx, todayYmd());
   const back = Math.round(ars / rate), left = inv ? Math.max(0, inv.usd - back) : 0;
   return { inv, ars, back, left, rate };
@@ -1834,8 +1838,8 @@ async function startScreen(ctx) {
   if (ctx.rishat) return rishatStart(ctx);
   if (ctx.wife) return wifeStart(ctx);
   await putSt(ctx, {});
-  await pinStart(ctx);                                    // СТАРТ закреплён сверху и обновляется (задача 30)
-  return dirMenu(ctx);                                    // снизу — главное меню
+  await dirMenu(ctx);                                     // снизу — главное меню (сначала: его ждёт владелец)
+  return pinStart(ctx).catch(() => {});                   // потом обновить закреплённый СТАРТ (задачи 30, 40)
 }
 // закреплённый СТАРТ (владелец 28.11, задача 30): одно сообщение сверху, бот его правит при каждом изменении; удалили — пришлёт и закрепит заново
 async function pinStart(ctx) {
@@ -1898,7 +1902,7 @@ function goalOrder(g) {
 }
 const autoCard = c => /^Нал/.test(c || '') || /вклад/i.test(c || '');
 async function goalProg(ctx, g) {                      // задача 38: прогресс = отложено вручную; «Сюрприз» — остаток вклада владельца
-  const [k] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
+  const [k] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]);
   const r = k.values.find(r => /^UZUM вклад/i.test(String(r[0] || ''))); let vk = r ? Math.max(0, Number(r[8]) || 0) : 0;
   const rate = await cbuRate(ctx, todayYmd());
   for (const id of goalOrder(g)) {
@@ -2101,7 +2105,7 @@ const dm = ymd => ymd.slice(8, 10) + '.' + ymd.slice(5, 7);
 const inVklad = x => x.src === 'vk' || (!x.src && (/^UZUM вклад|^вклад$/i.test(x.card || '') || x.name === 'Сюрприз'));   // копится на вкладе владельца — не в план по Налу
 const goalSrc = x => x.src || (inVklad(x) ? 'vk' : 'nal');   // задача 38: nal | wvk (вклад жены) | vk (вклад владельца)
 async function cashPool(ctx) {
-  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
+  const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:L20' }]);
   const bal = re => { const r = g.values.find(r => re.test(String(r[0] || ''))); return r ? Number(r[8]) || 0 : 0; };
   const cush = ((await getGoals(ctx)).cush || {}).total || 0, rate = await cbuRate(ctx, todayYmd());
   const gg = await getGoals(ctx), cushMon = ((gg.cush || {}).m || {})[fmBounds().start] || 0;   // задача 38: отложенное в этом месяце (ФОНД, квартира, цели) — прогресс плана, не минус
