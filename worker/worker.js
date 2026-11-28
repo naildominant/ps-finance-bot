@@ -1913,12 +1913,10 @@ function gShort(n, cur) {
 }
 const strike = s => [...s].map(c => c + '̶').join('');
 const ymNow = () => fmBounds().start;   // «месяц» подушки = финмесяц 26 → 25 (задача 17)
+const ordRows = g => [...goalOrder(g).map(id => g.list[id]).filter(x => x && !x.done).map(x => [[x.name.length > 16 ? x.name.slice(0, 15) + '…' : x.name, 'noop'], ['⬆️', 'gu:' + x.id + '|o'], ['⬇️', 'gdn:' + x.id + '|o']]), [['✅ Готово', 'gl:', 'success']]];
 async function goalsScreen(ctx, ordMode) {
+  if (ordMode) return send(ctx, '🔀 <b>Порядок целей</b>\nВыше — получает деньги первой.', ordRows(await getGoals(ctx)));   // «🔀 Порядок» (задачи 35, 39)
   const g = await goalProg(ctx, await getGoals(ctx)), c = g.cush, mon = c.m[ymNow()] || 0;
-  if (ordMode) {                                         // «🔀 Порядок» (задача 35): стрелки прямо в списке
-    const rowsO = goalOrder(g).map(id => g.list[id]).filter(x => x && !x.done).map(x => [[x.name.length > 16 ? x.name.slice(0, 15) + '…' : x.name, 'noop'], ['⬆️', 'gu:' + x.id + '|o'], ['⬇️', 'gdn:' + x.id + '|o']]);
-    return send(ctx, '🔀 <b>Порядок целей</b>\nВыше — получает деньги первой.', [...rowsO, [['✅ Готово', 'gl:', 'success']]]);
-  }
   const fl = await flatInfo(ctx, g);
   const all = goalOrder(g).map(id => g.list[id]).sort((a, b) => a.done - b.done);
   const rows = [];
@@ -1978,6 +1976,12 @@ async function goalAdd(ctx, cfg, id, amt, card) {          // отложил н�
   return goalsScreen(ctx);
 }
 async function onGoal(ctx, cfg, k, v, mid, st) {
+  if ((k === 'gu' || k === 'gdn') && /\|o$/.test(v)) {   // «Порядок»: переставить в том же сообщении, без перерисовки (задача 39)
+    const gid = v.split('|')[0], g = await getGoals(ctx), o = goalOrder(g), act = o.filter(i => g.list[i] && !g.list[i].done), i = act.indexOf(gid), j = k === 'gu' ? i - 1 : i + 1;
+    if (i < 0 || j < 0 || j >= act.length) return;
+    const a = o.indexOf(act[i]), b = o.indexOf(act[j]); [o[a], o[b]] = [o[b], o[a]]; g.order = o; await putGoals(ctx, g);
+    return tg(ctx, 'editMessageReplyMarkup', { chat_id: ctx.chat, message_id: mid, reply_markup: kb(ordRows(g)) });
+  }
   await gone(ctx, mid);
   if (k === 'gl') { await putSt(ctx, {}); return v ? goalScreen(ctx, v) : goalsScreen(ctx); }
   if (k === 'gs') {
