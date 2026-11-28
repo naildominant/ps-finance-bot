@@ -1915,21 +1915,36 @@ function gShort(n, cur) {
 }
 const strike = s => [...s].map(c => c + '̶').join('');
 const ymNow = () => fmBounds().start;   // «месяц» подушки = финмесяц 26 → 25 (задача 17)
-async function goalsScreen(ctx) {
+async function goalsScreen(ctx, ordMode) {
   const g = await goalProg(ctx, await getGoals(ctx)), c = g.cush, mon = c.m[ymNow()] || 0;
+  if (ordMode) {                                         // «🔀 Порядок» (задача 35): стрелки прямо в списке
+    const rowsO = goalOrder(g).map(id => g.list[id]).filter(x => x && !x.done).map(x => [[x.name.length > 16 ? x.name.slice(0, 15) + '…' : x.name, 'noop'], ['⬆️', 'gu:' + x.id + '|o'], ['⬇️', 'gdn:' + x.id + '|o']]);
+    return send(ctx, '🔀 <b>Порядок целей</b>\nВыше — получает деньги первой.', [...rowsO, [['✅ Готово', 'gl:', 'success']]]);
+  }
+  const fl = await flatInfo(ctx, g);
   const all = goalOrder(g).map(id => g.list[id]).sort((a, b) => a.done - b.done);
   const rows = [];
   try { const p = await fmToday(ctx); rows.push([[p.over ? '📊 Разбор месяца ⏳' : `📊 План до ${dm(p.fm.due)} · ${p.rem ? gShort(p.nal) + ' из ' + gShort(p.fm.plan) : 'закрыт ✅'}`, 'fp', p.rem && !p.over ? 'primary' : 'success']]); } catch (e) {}
   rows.push([[mon >= CUSH_USD ? `✅ ${strike('ФОНД: $' + CUSH_USD)}` : mon > 0 ? `🔒 ФОНД: $${fmt(mon)} из $${CUSH_USD}` : `🔒 ФОНД: отложить $${CUSH_USD}`, 'gl:cush', mon >= CUSH_USD ? 'success' : mon > 0 ? 'primary' : undefined]]);   // задача месяца $200; всего — внутри (владелец 28.11)
+  rows.push([[fl.done ? `✅ ${strike('Квартира: $' + FLAT_USD)}` : fl.usd > 0 ? `🏠 Квартира: $${fmt(fl.usd)} из $${FLAT_USD}` : `🏠 Квартира: отложить $${FLAT_USD}`, 'gl:flat', fl.done ? 'success' : fl.usd > 0 ? 'primary' : undefined]]);   // задача 37
   for (const x of all) {
     if (x.done) { rows.push([[`✅ ${strike(x.name)}`, 'gl:' + x.id, 'success']]); continue; }
     const full = x.prog >= x.sum;
     rows.push([[`${x.name} · ${full ? 'накоплено' : gShort(x.prog, x.cur) + ' из ' + gShort(x.sum, x.cur)}`, 'gl:' + x.id, x.prog > 0 ? 'primary' : undefined]]);
   }
-  rows.push([['➕ Новая цель', 'gn']], [['↩️ Назад', 'menu']]);
+  rows.push([['🔀 Порядок', 'go:'], ['➕ Новая цель', 'gn']], [['↩️ Назад', 'menu']]);
   return send(ctx, '🎯 <b>ЦЕЛИ</b>', rows);
 }
+// квартира (задача 37, владелец 28.11): $400 в месяц откладываются в НАЛ (сумы), отложенное не считается свободным; оплата 26-го
+async function flatInfo(ctx, g) {
+  g = g || await getGoals(ctx); const rate = await cbuRate(ctx, todayYmd()), saved = ((g.flat || {}).m || {})[fmBounds().start] || 0;
+  const need = Math.round(FLAT_USD * rate), usd = Math.round(saved / rate);
+  return { saved, need, usd: Math.min(usd, FLAT_USD), done: saved >= need - Math.round(rate / 2), rate };
+}
 async function goalScreen(ctx, id) {
+  if (id === 'flat') { const f = await flatInfo(ctx);
+    return send(ctx, `🏠 <b>Квартира</b> — $${FLAT_USD} в месяц, оплата ${FLAT_DAY}-го\nОткладываем в НАЛ.\nВ этом месяце: <b>${fmt(f.saved)} сум</b> (≈ $${fmt(f.usd)}) из ${fmt(f.need)} сум ($${FLAT_USD})${f.done ? ' ✅' : ''}`,
+      [[['💰 Отложил', 'gs:flat', 'primary']], [['↩️ Назад', 'gl:']]]); }
   const g = await goalProg(ctx, await getGoals(ctx));
   if (id === 'cush') {
     const c = g.cush, mon = c.m[ymNow()] || 0;
@@ -1970,7 +1985,7 @@ async function onGoal(ctx, cfg, k, v, mid, st) {
   await gone(ctx, mid);
   if (k === 'gl') { await putSt(ctx, {}); return v ? goalScreen(ctx, v) : goalsScreen(ctx); }
   if (k === 'gs') {
-    const g = await getGoals(ctx), cur = v === 'cush' ? '$' : (g.list[v] || {}).cur;
+    const g = await getGoals(ctx), cur = v === 'cush' ? '$' : v === 'flat' ? 'сум' : (g.list[v] || {}).cur;
     await putSt(ctx, { g: { id: v }, await: 'gsum' });
     return send(ctx, `💰 Сколько отложили? Напишите число, например ${cur === '$' ? '<code>50</code> (доллары)' : '<code>500000</code>'}.`, [[['↩️ Назад', 'gl:' + v]]]);
   }
@@ -1985,10 +2000,12 @@ async function onGoal(ctx, cfg, k, v, mid, st) {
       { cur: x.cur, group: x.group, cat: x.cat, from: src || null, comment: 'Цель: ' + x.name, goal: v, src: 'кнопка', n: 1, of: 1 });
     return askNext(ctx, cfg, { d, queue: [], dir: 'Личное' });
   }
+  if (k === 'go') return goalsScreen(ctx, true);       // «🔀 Порядок»
   if (k === 'gu' || k === 'gdn') {                       // ⬆️⬇️ приоритет
-    const g = await getGoals(ctx), o = goalOrder(g), i = o.indexOf(v), j = k === 'gu' ? i - 1 : i + 1;
+    const [gid, md] = v.split('|');
+    const g = await getGoals(ctx), o = goalOrder(g), i = o.indexOf(gid), j = k === 'gu' ? i - 1 : i + 1;
     if (i >= 0 && j >= 0 && j < o.length) { [o[i], o[j]] = [o[j], o[i]]; g.order = o; await putGoals(ctx, g); }
-    return goalScreen(ctx, v);
+    return md === 'o' ? goalsScreen(ctx, true) : goalScreen(ctx, gid);
   }
   if (k === 'gx') { const x = (await getGoals(ctx)).list[v]; if (!x) return goalsScreen(ctx);
     return send(ctx, `🗑 Удалить цель «${esc(x.name)}»?`, [[['Да, удалить', 'gy:' + v], ['Нет', 'gl:' + v]]]); }
@@ -2004,6 +2021,15 @@ async function goalCreate(ctx, nw, due) {
   return goalsScreen(ctx);
 }
 async function onGoalText(ctx, cfg, st, text) {           // ответы текстом/голосом в диалогах целей
+  if (st.await === 'gsum' && st.g.id === 'flat') {      // квартира: отложил в НАЛ
+    const a = parseAmount(text.replace(/сум[а-я]*/i, ''));
+    if (!a || !(a.amount > 0)) return send(ctx, 'Не понял сумму. Например <code>2400000</code> или <code>$200</code>.');
+    const amt = a.cur === '$' ? Math.round(a.amount * await cbuRate(ctx, todayYmd())) : a.amount;
+    const g = await getGoals(ctx); g.flat = g.flat || { m: {} }; const k = fmBounds().start; g.flat.m[k] = (g.flat.m[k] || 0) + amt;
+    await putGoals(ctx, g); await putSt(ctx, {});
+    await send(ctx, `🏠 Отложил на квартиру: +${fmt(amt)} сум (в НАЛ).`);
+    return goalsScreen(ctx);
+  }
   if (st.await === 'gsum') {
     const g = await getGoals(ctx), cur = st.g.id === 'cush' ? '$' : (g.list[st.g.id] || {}).cur || 'сум';
     const a = parseAmount(text.replace(/сум[а-я]*/i, ''));
@@ -2057,7 +2083,8 @@ async function cashPool(ctx) {
   const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:J20' }]);
   const bal = re => { const r = g.values.find(r => re.test(String(r[0] || ''))); return r ? Number(r[8]) || 0 : 0; };
   const cush = ((await getGoals(ctx)).cush || {}).total || 0, rate = await cbuRate(ctx, todayYmd());
-  const sum = bal(/^Нал/), usd = Math.max(0, bal(/^Доллары/) - cush);
+  const gg = await getGoals(ctx), flat = ((gg.flat || {}).m || {})[fmBounds().start] || 0;   // отложено на квартиру в НАЛ — не свободные (задача 37)
+  const sum = Math.max(0, bal(/^Нал/) - flat), usd = Math.max(0, bal(/^Доллары/) - cush);
   return { sum, usd, rate, total: Math.round(sum + usd * rate) };
 }
 async function nalBalance(ctx) { return (await cashPool(ctx)).total; }
@@ -2326,7 +2353,7 @@ async function onCallback(ctx, q, again) {
     if (v === 'inv') return rentInvScreen(ctx, cfg);
     return onCallback(ctx, { ...q, data: 'pt:-' }, true);
   }
-  if (['gl', 'gs', 'gk', 'gd', 'gx', 'gy', 'gn', 'gw', 'gu', 'gdn'].includes(k)) return onGoal(ctx, cfg, k, v, mid, st);
+  if (['gl', 'gs', 'gk', 'gd', 'gx', 'gy', 'gn', 'gw', 'gu', 'gdn', 'go'].includes(k)) return onGoal(ctx, cfg, k, v, mid, st);
   if (['fp', 'fmr', 'fmn', 'fma', 'fme'].includes(k)) return onFm(ctx, cfg, k, v, mid, st);   // 📊 план финмесяца   // 🎯 Цели
   if (k === 'tr') {                                  // 🔄 перевод между своими картами (владелец 27.11): сумма → откуда → куда
     await gone(ctx, mid);
