@@ -385,7 +385,9 @@ async function askNext(ctx, cfg, st) {
     return void await send(ctx, `К какому направлению относится: «${esc(d.comment)}»?`, withBack([[[DIRS[0], 'd:0'], [DIRS[1], 'd:1']], [[DIRS[2], 'd:2'], [DIRS[3], 'd:3']]])); }
   if (!d.type) { st.await = null; await putSt(ctx, st);
     return void await send(ctx, 'Это доход или расход?', withBack(typeRows(d.dir))); }
+  if (d.type === 'Между своими' && !d.from && !(/^Арс/.test(d.to || ''))) return void await askCard(ctx, cfg, st, 'from', '💳 <b>С какой карты переводим?</b>');   // перевод: откуда → сумма → куда (владелец 28.11)
   if (d.amount == null) { st.await = 'amount'; await putSt(ctx, st);
+    if (d.type === 'Между своими' && d.from) return void await send(ctx, `💰 <b>Сколько переводим с ${esc(cardLabel({ name: d.from }))}?</b>\nСейчас там: <b>${await balOf(ctx, d.from)}</b>`, withBack());
     return void await send(ctx, '💰 Какая сумма? Напишите число, например <code>150000</code> или <code>$50</code>.', withBack()); }
   if (d.dir === 'PS SHOP' && d.type === 'Доход' && !d.cat) {   // категорию дохода PS SHOP не спрашиваем (владелец 26.11); фильтры — позже
     if (d.group) d.cat = d.group; else d.group = d.cat = 'Продажа';
@@ -446,9 +448,16 @@ async function askCard(ctx, cfg, st, side, q) {
   const d = st.d, list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) =>
     isIn(d.type) ? c.inc.includes(d.dir) : isOut(d.type) ? c.exp.includes(d.dir) : true);
   if (isOut(d.type) && d.dir === 'Личное' && /Благотвор/i.test(d.cat || '')) { const i = cfg.cards.findIndex(c => c.name.startsWith('Приёмка')); if (i >= 0 && !list.some(x => x.i === i)) list.push({ c: cfg.cards[i], i }); }   // благотворительность — можно и с ГЛАВНОЙ (владелец 28.11)
-  const L = cardSort(list.length ? list : cfg.cards.map((c, i) => ({ c, i })));   // названия как в «Балансе» и тот же порядок — везде (владелец 27.11)
-  await send(ctx, q, withBack(chunk(L.map(({ c, i }) => [cardLabel(c), 'k:' + i]), 2)));
+  const L = cardSort((list.length ? list : cfg.cards.map((c, i) => ({ c, i }))).filter(({ c }) => !(side === 'to' && d.type === 'Между своими' && c.name === d.from)));   // «куда» — без карты «откуда»   // названия как в «Балансе» и тот же порядок — везде (владелец 27.11)
+  await send(ctx, q, withBack(await cardBtns(ctx, L, i => 'k:' + i)));
 }
+// кнопки карт с остатком «⭐ ГЛАВНАЯ: 1 220 641» (владелец 28.11) — остаток берём из таблицы прямо сейчас, по одной в строке
+async function liveBal(ctx) { try { const [g] = await gas(ctx, [{ op: 'get', sheet: 'Карты', range: 'A2:I20' }]); const m = {}; for (const r of g.values) if (r[0]) m[r[0]] = { v: Number(r[8]) || 0, usd: r[2] === '$' }; return m; } catch (e) { return {}; } }
+async function cardBtns(ctx, list, cb) {
+  const B = await liveBal(ctx);
+  return cardSort(list).map(({ c, i }) => { const b = B[c.name]; const v = b ? (b.usd ? '$' + fmt(b.v) : fmt(b.v)) : null; return [[cardLabel(c) + (v != null ? ': ' + v : ''), cb(i)]]; });
+}
+async function balOf(ctx, name) { const b = (await liveBal(ctx))[name]; return b ? (b.usd ? '$' + fmt(b.v) : fmt(b.v) + ' сум') : '—'; }
 const cardPos = c => TR_NAMES.findIndex(([k]) => String(c.name).startsWith(k));
 const cardLabel = c => (TR_NAMES[cardPos(c)] || [])[1] || c.name;
 const cardSort = L => L.slice().sort((a, b) => ((cardPos(a.c) + 1) || 99) - ((cardPos(b.c) + 1) || 99));
@@ -796,7 +805,7 @@ async function onWifeReq(ctx, cfg, k, v, mid) {          // владелец о�
   const b = cardByWord(cfg, 'Булка');
   if (k === 'wp') {
     const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.cur === 'сум' && c !== b && !/^Арс/.test(c.name));
-    return edit(ctx, mid, `👩 ${fmt(x.amount)} сум — ${esc(x.what)}\n<b>С какой карты перевели на BULKA CARD?</b>`, chunk(cardSort(list).map(({ c, i }) => [cardLabel(c), `wpf:${rid}|${i}`]), 2));
+    return edit(ctx, mid, `👩 ${fmt(x.amount)} сум — ${esc(x.what)}\n<b>С какой карты перевели на BULKA CARD?</b>`, await cardBtns(ctx, list, i => `wpf:${rid}|${i}`));
   }
   const src = cfg.cards[+ci]; if (!src || !b) return edit(ctx, mid, 'Карта не найдена.');
   const id = await botRec(ctx, cfg, { dir: 'Личное', type: 'Между своими', amount: x.amount, from: src.name, to: b.name, comment: `Жене: ${x.what}` });
@@ -905,7 +914,7 @@ async function onRishatReq(ctx, cfg, k, v, mid) {         // владелец: �
     await tg(ctx, 'sendMessage', { chat_id: x.chat, parse_mode: 'HTML', text: premium(`🙅 Наиль: вложение ${fmt(x.amount)} сейчас не делаем (${esc(x.what)}).`) }).catch(() => {});
     return edit(ctx, mid, `❌ Отказ по вложению ${fmt(x.amount)}. Ришату сообщил.`); }
   if (k === 'xy') { const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.cur === 'сум' && !/^Арс|^Булка|^Вклад жены/i.test(c.name));
-    return edit(ctx, mid, `💼 Вложение ${fmt(x.amount)} — ${esc(x.what)}\n<b>С какой карты?</b>`, chunk(cardSort(list).map(({ c, i }) => [cardLabel(c), `xyf:${rid}|${i}`]), 2)); }
+    return edit(ctx, mid, `💼 Вложение ${fmt(x.amount)} — ${esc(x.what)}\n<b>С какой карты?</b>`, await cardBtns(ctx, list, i => `xyf:${rid}|${i}`)); }
   const src = cfg.cards[+ci]; if (!src) return edit(ctx, mid, 'Карта не найдена.');
   const id = await botRec(ctx, cfg, { dir: 'Leadex', type: 'Вложение', cat: 'Вложение', amount: x.amount, from: src.name, comment: `Вложение по просьбе Ришата: ${x.what}` });
   x.done = id; await store(ctx, { op: 'put', k: 'xreq', v: R });
@@ -1044,7 +1053,7 @@ async function onToolText(ctx, cfg, st, text) {
     if (!a.amount) return finishPrepay(ctx, cfg, x, 0, null);
     const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.inc.includes(x.dir));
     await putSt(ctx, {});
-    return send(ctx, `💳 Куда пришла доплата ${fmt(a.amount)}?`, chunk(cardSort(list).map(({ c, i }) => [cardLabel(c), `pk:${x.id}|${i}|${a.amount}`]), 2));
+    return send(ctx, `💳 Куда пришла доплата ${fmt(a.amount)}?`, await cardBtns(ctx, list, i => `pk:${x.id}|${i}|${a.amount}`));
   }
 }
 // ежедневно в 9:00: брони, у которых наступила дата
@@ -1143,7 +1152,7 @@ async function onLeadex(ctx, q) {
   if (k === 'lxin') {                                     // вложение недостающей суммы: с какой карты
     if (!x.short) return edit(ctx, mid, 'Вложение уже записано.');
     const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.cur === 'сум');
-    return send(ctx, `С какой карты вложили ${fmt(x.short)} в LEADEX?`, [...chunk(cardSort(list).map(({ c, i }) => [cardLabel(c), `lxif:${id}|${i}`]), 2), [['Только записать', `lxif:${id}|-`]]]);
+    return send(ctx, `С какой карты вложили ${fmt(x.short)} в LEADEX?`, [...await cardBtns(ctx, list, i => `lxif:${id}|${i}`), [['Только записать', `lxif:${id}|-`]]]);
   }
   if (k === 'lxno') { await unkb(ctx, mid); await send(ctx, 'Хорошо, позже. Расчёт остаётся выше.', [[['✅ Перевёл', 'lxok:' + id]]]); await doneMark(ctx, 'Доход'); ctx.noTrack = false; return startScreen(ctx); }
   if (x.done) return edit(ctx, mid, 'Уже отмечено.');
@@ -1365,7 +1374,7 @@ async function onShares(ctx, q) {
     if (!amt || !tgt) return edit(ctx, mid, 'Сумма не найдена или уже записана.');
     if (k === 'bro') { const src = cardByWord(cfg, 'Капитал'); if (src) return broPaid(ctx, cfg, mid, src, tgt); }   // брату — всегда с АРЕНДНОЙ (владелец 27.11, /claude №10)
     const list = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.name !== tgt.name && c.cur === 'сум');
-    return edit(ctx, mid, `С какой карты перевели ${fmt(amt)} на «${tgt.name}»?`, chunk(cardSort(list).map(({ c, i }) => [cardLabel(c), `${k}f:${id}|${i}`]), 2));
+    return edit(ctx, mid, `С какой карты перевели ${fmt(amt)} на «${tgt.name}»?`, await cardBtns(ctx, list, i => `${k}f:${id}|${i}`));
   }
   if (k === 'rsvf' || k === 'brof') {
     const [iid, ci] = id.split('|'); const src = cfg.cards[+ci];
@@ -1987,7 +1996,7 @@ async function onGoalText(ctx, cfg, st, text) {           // ответы тек
     if (a.cur === '$' && cur !== '$') amt = Math.round(amt * await cbuRate(ctx, todayYmd()));   // $ на цель в сумах — по курсу ЦБ
     st.g.amt = amt; st.await = null; await putSt(ctx, st);
     const own = cfg.cards.map((c, i) => ({ c, i })).filter(({ c }) => c.exp.includes('Личное') || c.inc.includes('Личное') || /вклад/i.test(c.name));   // карты Личного + вклад
-    return send(ctx, '💳 Куда положили?', [...chunk(cardSort(own.length ? own : cfg.cards.map((c, i) => ({ c, i }))).map(({ c, i }) => [cardLabel(c), 'gk:' + i]), 2), [['↩️ Назад', 'gl:' + st.g.id]]]);
+    return send(ctx, '💳 Куда положили?', [...await cardBtns(ctx, own.length ? own : cfg.cards.map((c, i) => ({ c, i })), i => 'gk:' + i), [['↩️ Назад', 'gl:' + st.g.id]]]);
   }
   if (st.await === 'gname') {
     st.g.nw.name = text.slice(0, 30); st.await = 'gamt'; await putSt(ctx, st);
