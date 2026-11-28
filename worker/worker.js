@@ -1920,7 +1920,7 @@ async function goalsScreen(ctx) {
   const all = goalOrder(g).map(id => g.list[id]).sort((a, b) => a.done - b.done);
   const rows = [];
   try { const p = await fmToday(ctx); rows.push([[p.over ? '📊 Разбор месяца ⏳' : `📊 План до ${dm(p.fm.due)} · ${p.rem ? gShort(p.nal) + ' из ' + gShort(p.fm.plan) : 'закрыт ✅'}`, 'fp', p.rem && !p.over ? 'primary' : 'success']]); } catch (e) {}
-  rows.push([[`🔒 ФОНД: $${fmt(c.total)}`, 'gl:cush', mon >= CUSH_USD ? 'success' : mon > 0 ? 'primary' : undefined]]);   // $200 за месяц — зелёная
+  rows.push([[mon >= CUSH_USD ? `✅ ${strike('ФОНД: $' + CUSH_USD)}` : mon > 0 ? `🔒 ФОНД: $${fmt(mon)} из $${CUSH_USD}` : `🔒 ФОНД: отложить $${CUSH_USD}`, 'gl:cush', mon >= CUSH_USD ? 'success' : mon > 0 ? 'primary' : undefined]]);   // задача месяца $200; всего — внутри (владелец 28.11)
   for (const x of all) {
     if (x.done) { rows.push([[`✅ ${strike(x.name)}`, 'gl:' + x.id, 'success']]); continue; }
     const full = x.prog >= x.sum;
