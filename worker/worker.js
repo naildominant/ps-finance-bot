@@ -2470,7 +2470,11 @@ async function onCallback(ctx, q, again) {
         const m = await getDeals(ctx); const did = 'D' + (++m._n);
         m[did] = { id: did, name: d.dealName || 'сделка ' + did, prepay: [id], closed: false, at: Date.now() }; await putDeals(ctx, m);
       }
-      await edit(ctx, mid, `✅ Записано · ${id}${d.ord && !d.edit ? ' · заказ ' + d.ord : ''}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
+      let after = '';                                   // остатки карт сразу после записи (владелец 28.11)
+      if (!ctx.rishat) try { const B = await liveBal(ctx), ln = n => { const b = B[n]; return b ? `\n💳 ${esc(cardLabel({ name: n }))}: <b>${b.usd ? '$' + fmt(b.v) : fmt(b.v) + ' сум'}</b>` : ''; };
+        const cards = d.type === 'Между своими' ? [d.from, d.to] : [isOut(d.type) ? d.from : d.to];
+        after = cards.filter(Boolean).map(ln).join(''); if (after) after = '\n\n<b>Сейчас на картах:</b>' + after; } catch (e) {}
+      await edit(ctx, mid, `✅ Записано · ${id}${d.ord && !d.edit ? ' · заказ ' + d.ord : ''}${after}`, [[['✏️ Исправить', 'fx:' + id], ['🗑 Удалить', 'rm:' + id]]]);
       if (d.type === 'Расход') { ctx.noTrack = true; await limitCheck(ctx, d).catch(() => {}); }   // лимиты 70% / 100%
       ctx.keep = [mid]; ctx.noTrack = true;            // запись и расчёты после неё остаются в чате
       { const t = (await store(ctx, { op: 'get', k: 'trail' })) || []; await store(ctx, { op: 'put', k: 'trail', v: t.filter(i => i !== mid) }); ctx.trail = ctx.trail.filter(i => i !== mid); }
